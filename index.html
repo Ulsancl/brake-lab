@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111b23"><title>Brake Lab · 브레이크와 ABS</title>
+</head>
+<body>
+<header class="app-header"><div class="brand"><span class="brand-symbol">◉</span><div><strong>BRAKE LAB</strong><small>디스크 브레이크 · ABS</small></div></div><div class="header-note">멈추는 힘을 해부해 보세요 <span>버전 1.0.0</span></div><button id="save-project">실험 저장</button><button id="open-project">불러오기</button><button id="help" aria-label="사용 안내">?</button><input id="project-file" type="file" accept=".json" hidden></header>
+<main>
+<aside class="panel control-panel">
+ <div class="panel-heading"><span class="eyebrow">조건 바꾸기</span><h1>같은 속도, 다른 제동</h1><p>입력한 조건으로 다시 출발합니다.</p></div>
+ <fieldset><legend>캘리퍼 구조</legend><div class="segmented"><button data-caliper="floating" aria-pressed="true">플로팅</button><button data-caliper="fixed" aria-pressed="false">고정 대향</button></div><p class="hint">기본 두 구조는 같은 압력에서 같은 클램프 힘을 냅니다.</p></fieldset>
+ <label class="field">시작 속도 <output data-output="speedKmh">100 km/h</output><input data-setting="speedKmh" type="range" min="20" max="160" step="5" value="100"></label>
+ <label class="field">브레이크 압력 <output data-output="pressureBar">60 bar</output><input data-setting="pressureBar" type="range" min="0" max="100" step="1" value="60"></label>
+ <label class="field">노면 접지 <select data-setting="road"><option value="high">높은 접지</option><option value="medium">중간 접지</option><option value="low">낮은 접지</option></select></label><p class="hint">도로 측정값을 대신하는 합성 연습 곡선입니다.</p>
+ <label class="switch"><span>이상적 ABS</span><input data-setting="abs" type="checkbox" checked></label>
+ <details><summary>패드와 하중도 조절하기</summary>
+  <label class="field">패드 마찰 계수 <output data-output="padFriction">0.40</output><input data-setting="padFriction" type="range" min="0.2" max="0.65" step="0.01" value="0.4"></label>
+  <label class="field">패드 평균 반경 <output data-output="padMeanRadius">125 mm</output><input data-setting="padMeanRadius" type="range" min="0.09" max="0.16" step="0.005" value="0.125"></label>
+  <label class="field">바퀴당 배분 질량 <output data-output="mass">375 kg</output><input data-setting="mass" type="range" min="200" max="650" step="25" value="375"></label>
+ </details>
+ <div class="control-actions"><button id="start" class="primary">제동 시작</button><button id="reset">다시 출발</button></div>
+ <div class="playback"><label>재생 속도 <select id="playback-rate"><option value="0.25">1/4</option><option value="0.5">1/2</option><option value="1">실시간</option></select></label><span id="run-status">준비</span></div>
+ <div class="model-note">직선 제동 · 1휠 등가 모형<br>실제 차량의 성능·정비·안전을 판정하지 않습니다.</div>
+</aside>
+<section class="workbench">
+ <section class="first-experiment"><div><span class="eyebrow">처음 하는 실험</span><h2>ABS를 켜면 무엇이 달라질까요?</h2><p>현재 조건 그대로 켬·끔을 계산해 거리와 잠김을 비교합니다.</p></div><button id="compare-abs" class="primary">같은 조건으로 비교</button></section>
+ <div class="scene-toolbar"><div class="segmented"><button data-mode="assembled">조립</button><button data-mode="cutaway" aria-pressed="true">절개</button><button data-mode="exploded">분해</button></div><label>분해 간격 <input id="explode" type="range" min="0" max="1" step="0.01" value="0.5" disabled title="분해 보기에서 부품 사이 간격을 조절합니다."></label><label class="compact-check"><input id="labels" type="checkbox" checked>이름표</label><button id="focus" title="크게 보기 · F">크게 보기</button></div>
+ <section class="focus-panel" aria-label="확대 화면 조작"><div class="focus-part"><label>부품 살펴보기 <select id="focus-part" aria-label="확대 화면에서 선택할 부품"></select></label><p id="focus-part-description"></p><small id="focus-part-facts"></small></div><div class="focus-motion"><div class="focus-playback"><button id="focus-play" class="primary">제동 시작</button><label>재생 속도 <select id="focus-rate"><option value="0.25">1/4</option><option value="0.5">1/2</option><option value="1">실시간</option></select></label><span id="focus-status">준비</span></div><label class="focus-pressure">브레이크 압력 <output id="focus-pressure-value">60 bar</output><input id="focus-pressure" type="range" min="0" max="100" step="1" value="60" aria-describedby="focus-pressure-note"></label><p id="focus-pressure-note" class="focus-pressure-note">압력을 바꾸면 처음부터 다시 출발합니다.</p><div class="focus-readouts"><span>속도 <b id="focus-speed">100.0</b> km/h</span><span>슬립 <b id="focus-slip">0</b></span><span>경과 <b id="focus-time">0.00</b> s</span></div></div></section>
+ <div id="scene" role="region" tabindex="-1" aria-label="브레이크 구조 3D 관찰"></div>
+ <div class="camera-tools"><button data-camera="isometric">입체</button><button data-camera="front">정면</button><button data-camera="side">측면</button><span>드래그 회전 · 휠 확대</span></div>
+ <section class="telemetry" aria-label="현재 제동 상태">
+  <div><span>차량 속도</span><b id="speed">100.0</b><small>km/h</small></div><div><span>제동 거리</span><b id="distance">0.00</b><small>m</small></div><div><span>휠 슬립</span><b id="slip">0</b><small>%</small></div><div><span>디스크 평균 온도</span><b id="temperature">20.0</b><small>°C</small></div>
+ </section>
+ <section class="hydraulics"><div class="hydraulic-header"><strong>유압이 바퀴 잠김을 조절합니다</strong><span id="abs-phase">압력 증가</span></div><div class="hydraulic-path"><span>운전자</span><i>→</i><span id="inlet">입구 밸브</span><i>→</i><span id="caliper-pressure">캘리퍼 0 bar</span><i>→</i><span id="outlet">출구 밸브</span><i>→</i><span id="pump">환류 펌프</span></div><p id="force-readout">압력 · 브레이크 토크 · 노면 제동력</p></section>
+ <section class="results" id="results" hidden><div class="results-heading"><h2>ABS 켬 · 끔 비교</h2><button id="clear-results">비교 지우기</button></div><div id="comparison-summary" class="comparison-summary" tabindex="-1" aria-live="polite"><p id="comparison-headline"></p><p id="comparison-detail"></p><p id="comparison-energy"></p></div><p id="comparison-note"></p><table><thead><tr><th>조건</th><th>거리</th><th>시간</th><th>잠김</th><th>평균 온도 최고</th></tr></thead><tbody id="result-rows"></tbody></table><p class="hint">잠김은 2 m/s 초과 구간에서 확인합니다. 조향·노면 변형·하중 이동은 포함하지 않습니다.</p><canvas id="trace" width="900" height="190" aria-label="두 제동 결과의 시간별 속도 그래프"></canvas></section>
+</section>
+<aside class="panel inspector"><div class="panel-heading"><span class="eyebrow">부품 살펴보기</span><h2 id="part-name">통풍형 디스크</h2><p id="part-description">부품을 선택하면 재질과 역할을 확인할 수 있습니다.</p></div><div id="part-facts"></div><section id="storage-recovery" hidden><p>보호한 이전 저장 원문을 파일로 따로 보관할 수 있습니다.</p><button id="recover-original">이전 저장 원문 저장</button></section><div id="parts-list"></div><details class="scope"><summary>어디까지 보여주나요?</summary><p>두 캘리퍼의 구조와 압력·면적·토크 관계를 비교하는 대표 모형입니다. ABS는 차량 속도를 정확히 아는 이상적 제어기이며, 온도는 디스크 평균값입니다. 페이드·오일 비등·실차 정지거리 예측은 제공하지 않습니다.</p></details><p id="storage-status" role="status">이 기기에 자동 저장됨</p></aside>
+</main>
+<dialog id="help-dialog"><button id="close-help" aria-label="안내 닫기">×</button><h2>브레이크를 직접 살펴보세요</h2><p>제동 시작을 누르면 차량과 바퀴가 각각 감속합니다. 휠 슬립 0%는 구름, 100%는 바퀴 잠김을 뜻합니다.</p><p>일시정지는 현재 시점을 유지합니다. 이어서 제동으로 계속 관찰하고, 다시 출발로 처음부터 살펴보세요.</p><p>절개·분해 보기에서 패드, 피스톤, 씰, 베어링과 센서를 선택해 보세요. 작동을 확대해 보이는 움직임은 실제 변형 해석값과 구분합니다.</p><p>같은 조건으로 비교하면 현재 설정을 바꾸지 않고 ABS 켬·끔 두 시험의 실제 계산 결과를 보관합니다. ABS가 모든 상황에서 항상 더 짧게 멈춘다고 결론내리지 않습니다.</p><p>실험 저장으로 설정과 비교 결과를 파일로 보관할 수 있습니다.</p></dialog>
+<div id="toast" role="status" hidden></div><script type="module" src="/src/main.js"></script>
+</body></html>

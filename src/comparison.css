@@ -1,0 +1,45 @@
+.comparison-summary {
+  margin: 14px 0;
+  padding: 13px 15px;
+  border: 1px solid #446b67;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: #203832;
+}
+.comparison-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+#scene:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.results #comparison-headline {
+  color: #e1fff3;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.6;
+  margin: 0;
+}
+.results #comparison-detail {
+  color: #bed5cf;
+  line-height: 1.7;
+  margin: 7px 0 0;
+}
+.results #comparison-energy {
+  color: #bed5cf;
+  font-size: 11px;
+  line-height: 1.7;
+  border-top: 1px solid #446b67;
+  padding-top: 8px;
+  margin: 9px 0 0;
+}
+.comparison-summary[data-direction="incomplete"] {
+  border-color: #8c7453;
+  border-left-color: #d6b57e;
+  background: #363125;
+}
+@media (max-width: 720px) {
+  .comparison-summary { padding: 11px 12px; }
+  .results #comparison-headline { font-size: 14px; }
+}
