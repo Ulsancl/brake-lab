@@ -19,7 +19,7 @@ const profile = await fs.mkdtemp(path.join(output, 'profile-'));
 const env = { ...process.env, BRAKE_LAB_DATA_DIR: profile };
 delete env.ELECTRON_RUN_AS_NODE;
 const projectPath = path.join(output, '브레이크 실험.brake.json');
-let app, page, saved;
+let app, page, saved, windowRestoration;
 const checks = [], errors = [], remoteRequests = [];
 const state = () => page.evaluate(() => window.brakeLab.getState());
 const project = () => page.evaluate(() => window.brakeLab.project());
@@ -290,20 +290,110 @@ try {
   });
   await check('reload and full relaunch retain settings, original comparison and saved window dimensions', async () => {
     assert.deepEqual(await project(), saved);
+    const display = await app.evaluate(({ BrowserWindow, screen }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window.isMaximized()) window.unmaximize();
+      const current = window.getNormalBounds(), display = screen.getDisplayMatching(current);
+      return { bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor,
+        minimumSize: window.getMinimumSize(), current };
+    });
+    const area = display.workArea, [minWidth, minHeight] = display.minimumSize;
+    assert(area.width >= minWidth && area.height >= minHeight, 'The display must accommodate the application minimum size');
+    // Use integer DIP and physical-pixel edges. A half-pixel origin at fractional
+    // DPI can expand the native outer frame before this persistence test begins.
+    const gridStep = Array.from({ length: 100 }, (_, index) => index + 1)
+      .find(step => Math.abs(step * display.scaleFactor - Math.round(step * display.scaleFactor)) < 1e-7);
+    assert(gridStep, 'The display scale must have a usable integer DIP/physical-pixel grid');
+    const sizeOnGrid = (preferred, minimum, available) => {
+      const target = Math.max(minimum, Math.min(preferred, available - 32));
+      const value = Math.max(Math.ceil(minimum / gridStep), Math.floor(target / gridStep)) * gridStep;
+      assert(value <= available, 'The display must fit an aligned test size');
+      return value;
+    };
+    const positionOnGrid = (origin, start, available, size) => {
+      const first = Math.ceil((start - origin) / gridStep), last = Math.floor((start + available - size - origin) / gridStep);
+      assert(first <= last, 'The work area must fit an aligned test position');
+      const center = Math.floor((start + (available - size) / 2 - origin) / gridStep);
+      return origin + Math.max(first, Math.min(center, last)) * gridStep;
+    };
+    const requested = {
+      width: sizeOnGrid(1050, minWidth, area.width),
+      height: sizeOnGrid(780, minHeight, area.height),
+    };
+    requested.x = positionOnGrid(display.bounds.x, area.x, area.width, requested.width);
+    requested.y = positionOnGrid(display.bounds.y, area.y, area.height, requested.height);
+    windowRestoration = { display, gridStep, requested };
+    await app.evaluate(({ BrowserWindow }, bounds) => BrowserWindow.getAllWindows()[0].setBounds(bounds), requested);
+    const stableBounds = async label => {
+      let bounds, previousBounds, stableSamples = 0;
+      await waitFor(async () => {
+        bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getNormalBounds());
+        stableSamples = JSON.stringify(bounds) === JSON.stringify(previousBounds) ? stableSamples + 1 : 0;
+        previousBounds = bounds;
+        return stableSamples >= 2;
+      }, label);
+      return bounds;
+    };
+    const bounds = await stableBounds('stable native window rectangle');
+    windowRestoration.beforeReload = bounds;
+    assert.equal(bounds.width, requested.width, 'Native width differs from the selected valid size');
+    assert.equal(bounds.height, requested.height, 'Native height differs from the selected valid size');
+    assert(bounds.width >= minWidth && bounds.height >= minHeight);
+    assert(bounds.width <= area.width && bounds.height <= area.height, 'Saved dimensions must fit the display work area');
+    assert(bounds.x >= area.x && bounds.y >= area.y);
+    assert(bounds.x + bounds.width <= area.x + area.width && bounds.y + bounds.height <= area.y + area.height);
     await page.reload(); await page.waitForFunction(() => window.brakeLab?.getState && document.querySelector('#scene canvas'));
     assert.deepEqual(await project(), saved);
-    const bounds = await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]; if (window.isMaximized()) window.unmaximize();
-      window.setSize(1050, 780); return window.getNormalBounds();
-    });
+    const afterReload = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getNormalBounds());
+    windowRestoration.afterReload = afterReload;
+    assert.deepEqual(afterReload, bounds, 'Reload must keep the selected window rectangle');
     await app.close(); app = null;
     const recordedBounds = JSON.parse(await fs.readFile(path.join(profile,'window.json'),'utf8'));
-    // Windows may round the native outer frame after setSize returns at fractional DPI.
-    assert(Math.abs(recordedBounds.width-bounds.width)<=2);assert(Math.abs(recordedBounds.height-bounds.height)<=2);
+    windowRestoration.saved = recordedBounds;
+    assert.equal(recordedBounds.maximized, false);
+    assert.equal(recordedBounds.width, bounds.width); assert.equal(recordedBounds.height, bounds.height);
     await launch();
     assert.deepEqual(await project(), saved);
     const restored = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getNormalBounds());
+    windowRestoration.restored = restored;
     assert.equal(restored.width, recordedBounds.width); assert.equal(restored.height, recordedBounds.height);
+    // Keep an arbitrary, potentially half-physical-pixel position as well. The
+    // initial native frame may quantize the requested size, but saving that actual
+    // rectangle must not add another pixel on either of the next two restarts.
+    const offsetPosition = (position, start, available, size) => position + size + 2 <= start + available
+      ? position + 1 : position - 1 >= start ? position - 1 : position;
+    const arbitrary = { ...requested,
+      x: offsetPosition(requested.x, area.x, area.width, requested.width),
+      y: offsetPosition(requested.y, area.y, area.height, requested.height) };
+    windowRestoration.arbitraryPosition = { requested: arbitrary, cycles: [] };
+    await app.evaluate(({ BrowserWindow }, target) => BrowserWindow.getAllWindows()[0].setBounds(target), arbitrary);
+    const originalRectangle = await stableBounds('stable arbitrary-position native rectangle');
+    windowRestoration.arbitraryPosition.initialActual = originalRectangle;
+    assert(Math.abs(originalRectangle.width - arbitrary.width) <= 1, 'Initial native width quantization exceeds one DIP');
+    assert(Math.abs(originalRectangle.height - arbitrary.height) <= 1, 'Initial native height quantization exceeds one DIP');
+    assert(originalRectangle.x >= area.x && originalRectangle.y >= area.y);
+    assert(originalRectangle.x + originalRectangle.width <= area.x + area.width
+      && originalRectangle.y + originalRectangle.height <= area.y + area.height);
+    let beforeClose = originalRectangle;
+    for (let restart = 1; restart <= 2; restart++) {
+      const cycle = { restart, beforeClose };
+      windowRestoration.arbitraryPosition.cycles.push(cycle);
+      assert.deepEqual(await project(), saved);
+      await app.close(); app = null;
+      cycle.saved = JSON.parse(await fs.readFile(path.join(profile, 'window.json'), 'utf8'));
+      assert.equal(cycle.saved.maximized, false);
+      for (const axis of ['x', 'y', 'width', 'height']) {
+        assert.equal(cycle.saved[axis], beforeClose[axis], `Restart ${restart}: saved ${axis} differs from the actual window`);
+      }
+      await launch();
+      assert.deepEqual(await project(), saved);
+      cycle.restored = await stableBounds(`stable arbitrary-position rectangle after restart ${restart}`);
+      for (const axis of ['x', 'y', 'width', 'height']) {
+        assert.equal(cycle.restored[axis], cycle.saved[axis], `Restart ${restart}: restored ${axis} differs from the saved value`);
+        assert.equal(cycle.restored[axis], originalRectangle[axis], `Restart ${restart}: arbitrary-position ${axis} accumulated drift`);
+      }
+      beforeClose = cycle.restored;
+    }
     await page.screenshot({ path: path.join(output, 'native-app-restarted.png') });
   });
   await check('new experiment command clears comparisons and restores default input values', async () => {
@@ -330,13 +420,13 @@ try {
     assert.deepEqual(errors, []); assert.deepEqual(remoteRequests, []);
   });
   await fs.writeFile(path.join(output, 'result.json'), JSON.stringify({ version: expectedVersion, packaged,
-    executablePath, profile, checks, errors, remoteRequests, state: await state() }, null, 2));
+    executablePath, profile, checks, errors, remoteRequests, windowRestoration, state: await state() }, null, 2));
   console.log(`Desktop validation: ${checks.length} checks passed.`);
 } catch (error) {
   const diagnostic = page ? await page.evaluate(() => ({ toast: document.querySelector('#toast')?.textContent,
     state: window.brakeLab?.getState() })).catch(() => null) : null;
   if (page) await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
   await fs.writeFile(path.join(output, 'failure.json'), JSON.stringify({ message: error.message, checks,
-    errors, remoteRequests, diagnostic }, null, 2));
+    errors, remoteRequests, windowRestoration, diagnostic }, null, 2));
   throw error;
 } finally { if (app) { await page?.evaluate(() => window.brakeDesktop?.setBusy(false)).catch(() => {}); await app.close().catch(() => {}); } }

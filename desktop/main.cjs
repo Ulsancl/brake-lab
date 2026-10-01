@@ -146,7 +146,7 @@ function createMenu() {
       { label: '사용 안내', accelerator: 'F1', click: () => command('help') },
       { label: '저장 폴더 열기', click: () => shell.openPath(app.getPath('userData')) },
       { label: '프로그램 정보', click: () => dialog.showMessageBox(mainWindow, { type: 'info', title: APP_NAME,
-        message: `${APP_NAME} ${app.getVersion()} · 개발판`,
+        message: `${APP_NAME} ${app.getVersion()}`,
         detail: '디스크 브레이크 구조 · 이상적인 ABS · 같은 조건의 결과 비교\n\n설정과 마지막 비교 결과는 이 앱에 자동 저장됩니다. 실험 JSON으로 백업할 수 있습니다.\n\n계산 모형: brake-1.0.0 · 한 바퀴의 직선 제동, 합성 노면 곡선\n실제 차량의 정비 상태나 안전 여부를 판정하지 않습니다.', buttons: ['확인'] }) },
     ] },
   ]));
@@ -166,6 +166,23 @@ function windowBounds(saved) {
   const x = Math.max(area.x, Math.min(number(saved.x, area.x + (area.width - width) / 2), area.x + area.width - width));
   const y = Math.max(area.y, Math.min(number(saved.y, area.y + (area.height - height) / 2), area.y + area.height - height));
   return { x, y, width, height, minWidth, minHeight };
+}
+
+function restoreWindowBounds(window, preferred) {
+  const keys = ['x', 'y', 'width', 'height'];
+  const requested = Object.fromEntries(keys.map(key => [key, preferred[key]]));
+  // On Windows at fractional DPI, setBounds/getNormalBounds can differ by a DIP
+  // because the native frame rounds its edges to physical pixels. Restore the
+  // saved *actual* rectangle, rather than feeding that rounding error into the
+  // next saved size. Keep the correction bounded if the OS constrains a window.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    window.setBounds(requested);
+    if (process.platform !== 'win32') break;
+    const actual = window.getNormalBounds();
+    const differences = keys.map(key => preferred[key] - actual[key]);
+    if (differences.every(value => value === 0) || differences.some(value => Math.abs(value) > 2)) break;
+    keys.forEach((key, index) => { requested[key] += differences[index]; });
+  }
 }
 
 function createWindow() {
@@ -191,11 +208,11 @@ function createWindow() {
     dialog.showErrorBox(APP_NAME, '프로그램 파일을 읽지 못했습니다. 설치 파일로 다시 설치해 주세요.'); app.quit();
   });
   mainWindow.once('ready-to-show', () => {
-    if (saved.maximized === true) mainWindow.maximize();
     mainWindow.show();
-    // Windows adjusts its hidden-window frame at fractional DPI when it first becomes visible.
-    // Reapply the normal rectangle after showing so repeated launches do not grow the saved size.
-    if (saved.maximized !== true) mainWindow.setBounds({x:preferredBounds.x,y:preferredBounds.y,width:preferredBounds.width,height:preferredBounds.height});
+    // Correct the visible normal frame before maximizing so its restored size
+    // also stays stable when the app was closed maximized.
+    restoreWindowBounds(mainWindow, preferredBounds);
+    if (saved.maximized === true) mainWindow.maximize();
   });
   mainWindow.on('close', event => {
     if (calculationBusy || nativeBusy || downloads.size) {
