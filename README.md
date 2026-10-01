@@ -1,5 +1,11 @@
 # Brake Lab
 
+현재 소스는 **1.1.0 디테일 개선 검토본**입니다. 베어링의 회전·구름과 궤도 홈, ABS 밸브 내부 작동, 선택 부품 확대·실시간 관측값, 누적 에너지 배분을 개선합니다. 수치 해석 모형 `brake-1.0.0`과 저장된 실험은 유지합니다. [개선 내용과 검증](docs/detail-refinement.md)을 참고하세요. 아래 설치 안내는 이미 공개된 **1.0.0 릴리스** 기준이며, 소스 변경이 기존 설치파일을 대체하지 않습니다.
+
+![1.1 베어링 상세 관찰](public/screenshots/bearing-detail-v1.1.png)
+
+![1.1 ABS 밸브 내부 관찰](public/screenshots/abs-valve-detail-v1.1.png)
+
 **Brake Lab 1.0.0**은 브레이크 구조와 ABS의 작동을 직접 살펴보고, 조건을 바꾸어 제동 결과를 비교하는 **Windows x64용 오프라인 시뮬레이션 앱**입니다.
 
 **[Windows 설치파일 다운로드](https://github.com/Ulsancl/brake-lab/releases/latest)**
@@ -29,3 +35,7 @@
 기초 원리는 [Bosch ABS](https://www.bosch-mobility.com/en/solutions/driving-safety/antilock-braking-system/), [MathWorks 디스크 브레이크](https://www.mathworks.com/help/sdl/ref/discbrake.html), [타이어와 노면 모형](https://www.mathworks.com/help/sdl/ref/tireroadinteractionmagicformula.html)을 참고합니다. 구체적인 식·기본값·한계는 [계산 모형](docs/model.md)과 [부품 구조](docs/anatomy.md)에서 설명합니다.
 
 앱 자체는 UNLICENSED입니다. Three.js·Electron과 포함 구성요소의 [외부 소프트웨어 고지](docs/THIRD-PARTY-NOTICES.md)는 별도로 제공합니다.
+
+## 소스 검증 환경
+
+Node.js 24.19.0 이상을 사용합니다. `npm ci`, `npm test`, `npm run build`, `npm run test:browser`, `npm run test:detail`로 계산·형상·화면을 검증합니다. Windows 앱은 `node scripts/desktop.mjs prepare-test` 후 `npm run test:desktop`으로 확인하고 `npm run package:desktop`으로 설치파일을 만듭니다. 기존 1.0.0 공개 설치 안내와 1.1.0 소스 검증 결과를 구분하세요.

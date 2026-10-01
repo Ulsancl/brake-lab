@@ -148,6 +148,24 @@ try {
     assert.ok(Math.abs(result.after - result.before - 0.3 * 0.25) < 0.002);
     assert.equal(result.final.running, false); assert.equal(result.final.snapshot.time, result.paused);
   });
+  await check('bundled component inspection, bearing motion and energy observations preserve experiment state', async () => {
+    const before = await state(), saved = await project();
+    await page.evaluate(() => window.brakeLab.selectPart('bearing'));
+    await page.locator('#inspect-part').click();
+    const inspected = await state();
+    assert.equal(inspected.scene.inspection.active, true); assert.equal(inspected.scene.inspection.partId, 'bearing');
+    assert.deepEqual(inspected.snapshot, before.snapshot);
+    assert.equal(inspected.detail.bearing.cageAngle, inspected.scene.bearing.cageAngle);
+    assert.equal(inspected.detail.bearing.innerAngle, inspected.snapshot.wheelAngle);
+    assert.equal(await page.locator('#part-detail-facts .detail-fact').count(), 6);
+    const energy = await page.locator('[data-energy-segment]').evaluateAll(nodes => nodes.map(node => Number(node.dataset.joules)));
+    assert.ok(Math.abs(energy.reduce((total, value) => total + value, 0) + inspected.snapshot.energyResidual - inspected.snapshot.initialEnergy) < 1e-7);
+    await page.locator('#restore-inspection').click();
+    const restored = await state(); assert.equal(restored.scene.inspection.active, false);
+    for (const key of ['position', 'target']) restored.scene.cameraPose[key].forEach((value, index) => assert.ok(Math.abs(value - before.scene.cameraPose[key][index]) < 1e-9));
+    assert.deepEqual((await project()).comparison, saved.comparison);
+    await page.evaluate(id => window.brakeLab.selectPart(id), before.view.selectedPart);
+  });
   await check('native play menu and shortcut return from comparison to 3D; Space pauses once without scroll and ignores inputs', async () => {
     await page.evaluate(() => { window.brakeLab.reset(); document.activeElement?.blur(); });
     const clockTime = new Date('2026-10-01T08:00:00Z');

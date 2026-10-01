@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ENCODER_TEETH, hubBearingKinematics } from './mechanical-detail.js';
 
 const TAU = Math.PI * 2;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -20,12 +21,12 @@ const PARTS = {
   'pad-hardware': ['패드 고정 장치', '패드의 자리와 진동을 제어하는 클립·스프링·리테이너입니다. 몸체 슬라이드 핀과 구분됩니다.', '스프링 강철', false],
   bleeder: ['블리더', '유압실에 연결된 공기 배출 나사와 보호 캡입니다.', '강철 · 고무', false],
   hose: ['유압 호스', '유압모듈에서 캘리퍼로 브레이크액 압력을 전달합니다.', '고무 · 강철 연결부', false],
-  bearing: ['허브 베어링', '고정 외륜과 회전 내륜 사이에서 볼이 허브를 지지합니다.', '베어링 강철', false],
+  bearing: ['허브 베어링', '두 줄의 볼과 홈이 있는 내외륜, 리테이너를 보여 줍니다. 외륜은 고정되고 볼의 공전·자전은 미끄럼 없는 접촉각 0° 대표 운동입니다. 실제 하중·예압·수명은 계산하지 않습니다.', '베어링 강철', false],
   knuckle: ['너클 지지부', '베어링 외륜과 브래킷이 고정되는 대표 지지 형상입니다.', '주조 강철', false],
   encoder: ['속도 인코더 링', '허브와 함께 회전하는 대표 톤 링입니다. 고정 센서가 비접촉으로 읽습니다.', '강철', true],
   sensor: ['휠속도 센서', '고정 지지부에 설치되어 인코더의 회전을 읽습니다. ABS 제어기로 속도 정보를 보냅니다.', '수지 · 금속', false],
   'hydraulic-unit': ['ABS 유압모듈', '캘리퍼 밖에 위치하는 대표 유압블록입니다. 공급·배출 밸브와 복귀 펌프를 보여 줍니다.', '알루미늄', false],
-  valves: ['공급·배출 밸브', '실제 계산된 밸브 열림 상태를 표시합니다. 증가·유지·감압의 흐름을 구분합니다.', '강철 · 구리', false],
+  valves: ['공급·배출 밸브', '계산된 밸브 상태에 따라 시트에서 플런저가 열리고 닫힙니다. 스프링·코일·유로는 대표 구조이며 이동량은 확대한 작동 표현입니다.', '강철 · 구리', false],
   pump: ['복귀 펌프', '감압 회로의 액을 복귀시키는 대표 펌프입니다. 계산된 가동 상태를 표시합니다.', '강철 · 알루미늄', false]
 };
 
@@ -66,10 +67,12 @@ export function getGeometryRepresentation(input = {}) {
 
 export function fitBrakeCamera(camera,subject,{aspect=1,direction=new THREE.Vector3(.36,.23,.73),fill=.72}={}) {
   subject.updateMatrixWorld(true);
-  const bounds=new THREE.Box3().setFromObject(subject),center=bounds.getCenter(new THREE.Vector3()),axis=direction.clone().normalize();
+  const bounds=new THREE.Box3(),worldPoints=[];
+  subject.traverseVisible(node=>{if(!node.isMesh)return;const position=node.geometry.attributes.position,count=node.isInstancedMesh?node.count:1,matrix=new THREE.Matrix4();for(let instance=0;instance<count;instance++){if(node.isInstancedMesh){node.getMatrixAt(instance,matrix);matrix.premultiply(node.matrixWorld);}else matrix.copy(node.matrixWorld);for(let i=0;i<position.count;i++){const point=new THREE.Vector3().fromBufferAttribute(position,i).applyMatrix4(matrix);bounds.expandByPoint(point);worldPoints.push(point);}}});
+  const center=bounds.isEmpty()?new THREE.Vector3():bounds.getCenter(new THREE.Vector3()),axis=direction.clone().normalize();
   camera.aspect=aspect;camera.position.copy(center).add(axis);camera.lookAt(center);camera.updateMatrixWorld(true);camera.updateProjectionMatrix();
   const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion),up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion),points=[];
-  subject.traverse(node=>{if(!node.isMesh)return;const position=node.geometry.attributes.position;for(let i=0;i<position.count;i++){const offset=new THREE.Vector3().fromBufferAttribute(position,i).applyMatrix4(node.matrixWorld).sub(center);points.push([offset.dot(right),offset.dot(up),offset.dot(axis)]);}});
+  for(const point of worldPoints){const offset=point.sub(center);points.push([offset.dot(right),offset.dot(up),offset.dot(axis)]);}
   const tangent=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2),measure=distance=>{
     let left=Infinity,rightEdge=-Infinity,bottom=Infinity,top=-Infinity;
     for(const [x,y,z] of points){const depth=distance-z,px=x/(depth*tangent*aspect),py=y/(depth*tangent);left=Math.min(left,px);rightEdge=Math.max(rightEdge,px);bottom=Math.min(bottom,py);top=Math.max(top,py);}
@@ -207,13 +210,15 @@ function castNoise() {
 }
 
 function machinedRings() {
-  const data = new Uint8Array(128 * 128 * 4);
-  for (let y=0;y<128;y++) for(let x=0;x<128;x++) { const i=(y*128+x)*4,r=Math.hypot(x-63.5,y-63.5),value=Math.round(155+23*Math.sin(r*3.5)+7*Math.sin(r*17)); data[i]=data[i+1]=data[i+2]=value;data[i+3]=255; }
-  const texture = new THREE.DataTexture(data,128,128);texture.anisotropy=4;texture.needsUpdate=true; return texture;
+  const size=512,data=new Uint8Array(size*size*4),center=(size-1)/2;
+  // Both radial frequencies stay below pi radians per texel. The old 17
+  // rad/texel signal aliased into coarse irregular patterns on turned faces.
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){const i=(y*size+x)*4,r=Math.hypot(x-center,y-center),value=Math.round(155+18*Math.sin(r*1.45)+5*Math.sin(r*2.67));data[i]=data[i+1]=data[i+2]=value;data[i+3]=255;}
+  const texture=new THREE.DataTexture(data,size,size);texture.anisotropy=8;texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearMipmapLinearFilter;texture.generateMipmaps=true;texture.needsUpdate=true;return texture;
 }
 
 export function createBrakeAssembly(input = {}, initialView = {}) {
-  const settings = normalizeGeometrySettings(input), view = normalizeView(initialView), resources = { geometries:new Set(),materials:new Set(),textures:new Set() };
+  const settings = normalizeGeometrySettings(input), view = normalizeView(initialView), resources = { geometries:new Set(),materials:new Set(),textures:new Set(),instances:new Set() };
   const group = new THREE.Group(); group.name='generic-brake-assembly';
   const noise=castNoise(), rings=machinedRings(); resources.textures.add(noise);resources.textures.add(rings);
   const material = options => { const value = new THREE.MeshStandardMaterial(options);resources.materials.add(value);return value; };
@@ -234,6 +239,9 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     outlet:material({color:0x78545e,metalness:.50,roughness:.35}),
     pump:material({color:0x4b606c,metalness:.85,roughness:.35})
   };
+  materials.bearing=material({color:0xc8d3dc,metalness:.98,roughness:.16});
+  materials.balls=material({color:0xffffff,metalness:.97,roughness:.14,vertexColors:true});
+  materials.cage=material({color:0x978667,metalness:.78,roughness:.34});
   const components = new Map(), dynamics = [], spins=[], cuts=[];
   const makePart = (id, anchor, offset = [0,0,0]) => {
     const node=new THREE.Group();node.name=id;node.userData.componentId=id;group.add(node);
@@ -362,19 +370,39 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   mesh(knuckle,extrudedPolygon(knuckleShape,.018,-.105,[[0,0,.041],[-.059,padR-.036,.005],[.059,padR-.036,.005]]),materials.structural);
   ring(knuckle,.0407,.055,-.124,-.064,materials.structural,{},shellStart,shellLength,64);
   const bearing=makePart('bearing',[.031,-.022,-.078],[0,0,-.11]);
-  const bearingRotation=new THREE.Group();bearing.add(bearingRotation);
-  for(const z of [-.106,-.071]){
-    ring(bearing,.036,.0405,z-.006,z+.006,materials.machined,{},shellStart,shellLength,64);
-    ring(bearingRotation,.0238,.0283,z-.006,z+.006,materials.machined,{},shellStart,shellLength,64);
-    for(let i=0;i<12;i++){
-      const angle=TAU*i/12;if(section&&(Math.cos(angle)>.08))continue;
-      const ball=mesh(bearing,new THREE.SphereGeometry(.0048,12,8),materials.steel,{x:Math.cos(angle)*.0321,y:Math.sin(angle)*.0321,z});ball.userData.role='bearing-ball';
+  const bearingRows=[],bearingPitch=.0321,bearingBallRadius=.0048;
+  const ballGeometry=new THREE.SphereGeometry(bearingBallRadius,20,14),ballColors=[];
+  for(let i=0;i<ballGeometry.attributes.position.count;i++){const color=new THREE.Color(Math.abs(ballGeometry.attributes.position.getY(i))<bearingBallRadius*.10?0x61788a:0xd5dce2);ballColors.push(color.r,color.g,color.b);}
+  ballGeometry.setAttribute('color',new THREE.Float32BufferAttribute(ballColors,3));resources.geometries.add(ballGeometry);
+  const cageBarGeometry=new THREE.CylinderGeometry(.00055,.00055,.0102,8);cageBarGeometry.rotateX(Math.PI/2);resources.geometries.add(cageBarGeometry);
+  const instance=(geometry,base,role,z)=>{const node=new THREE.InstancedMesh(geometry,base,12);node.position.z=z;node.userData.role=role;node.castShadow=true;node.receiveShadow=true;node.instanceMatrix.setUsage(THREE.DynamicDrawUsage);node.boundingSphere=new THREE.Sphere(new THREE.Vector3(),bearingPitch+.007);bearing.add(node);resources.instances.add(node);return node;};
+  const bearingRace=(outer,z)=>{
+    const groove=bearingBallRadius*1.07,half=.006,edge=.00045,span=.0033,sign=outer?1:-1;
+    const center=bearingPitch-sign*(groove-bearingBallRadius),track=x=>center+sign*Math.sqrt(groove*groove-x*x)+sign*.000035;
+    const backRadius=outer?.0405:hubStem+.0001,shoulder=track(span);
+    const profile=[[shoulder+sign*edge,-half],[shoulder,-half+edge],[shoulder,-span]];
+    for(let i=1;i<=20;i++){const axial=-span+2*span*i/20;profile.push([track(axial),axial]);}
+    profile.push([shoulder,half-edge],[shoulder+sign*edge,half],[backRadius-sign*edge,half],[backRadius,half-edge],[backRadius,-half+edge],[backRadius-sign*edge,-half]);
+    if(outer)profile.reverse();
+    const geometry=latheShell(profile,shellStart,shellLength,128),p=geometry.attributes.position,n=geometry.attributes.normal;
+    // Smooth only circumferential normals; profile edges and cut faces stay crisp.
+    for(const group of geometry.groups)if(group.materialIndex!==2)for(let i=group.start;i<group.start+group.count;i++){
+      const radius=Math.hypot(p.getX(i),p.getY(i)),radial=Math.hypot(n.getX(i),n.getY(i))*Math.sign(n.getX(i)*p.getX(i)+n.getY(i)*p.getY(i));
+      if(radius>0)n.setXYZ(i,radial*p.getX(i)/radius,radial*p.getY(i)/radius,n.getZ(i));
     }
-    if(!section)ring(bearing,.0287,.0356,z+.0056,z+.0063,materials.black,{},0,TAU,64);
+    geometry.userData.role=outer?'bearing-outer-race':'bearing-inner-race';geometry.userData.grooveRadius=groove;geometry.userData.contactRadius=bearingPitch+sign*bearingBallRadius;
+    const node=mesh(bearing,geometry,materials.bearing,{z});node.userData.role=geometry.userData.role;return node;
+  };
+  for(const [row,z] of [-.106,-.071].entries()){
+    bearingRace(true,z);bearingRace(false,z);
+    const balls=instance(ballGeometry,materials.balls,'bearing-balls',z),bars=instance(cageBarGeometry,materials.cage,'bearing-cage-bars',z);
+    for(const side of [-1,1])ring(bearing,bearingPitch-.0007,bearingPitch+.0007,z+side*.0057-.0004,z+side*.0057+.0004,materials.cage,{},shellStart,shellLength,96);
+    bearingRows.push({z,offset:row*Math.PI/12,balls,bars,firstBallPosition:null,firstBallSpin:0});
+    if(!section)ring(bearing,.0287,.0356,z+.0064,z+.0071,materials.black,{},0,TAU,64);
   }
   const encoder=makePart('encoder',[.041,-.025,-.132],[0,0,-.26]);const encoderSpin=new THREE.Group();encoder.add(encoderSpin);spins.push(encoderSpin);
   ring(encoderSpin,.025,.047,-.135,-.130,materials.steel);
-  for(let i=0;i<48;i++){const angle=TAU*i/48;ring(encoderSpin,.045,.051,-.135,-.130,materials.steel,{},angle,.055,128);}
+  for(let i=0;i<ENCODER_TEETH;i++){const angle=TAU*i/ENCODER_TEETH;ring(encoderSpin,.045,.051,-.135,-.130,materials.steel,{},angle,.055,128);}
   const sensor=makePart('sensor',[.061,-.030,-.132],[.095,-.05,-.16]);
   mesh(sensor,extrudedPolygon([[.045,-.045],[.073,-.045],[.082,-.030],[.073,-.016],[.047,-.016]],.016,-.141,[[.073,-.030,.0025]]),materials.sensor);
   ring(sensor,0,.0044,-.133,-.123,materials.steel,{x:.053,y:-.030},0,TAU,24);
@@ -389,11 +417,25 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   for(const [index,x] of [-.018,.018].entries()){
     const node=new THREE.Group();node.position.set(hcuCenter.x+x,hcuCenter.y,hcuCenter.z);valves.add(node);
     ring(node,.0052,.0088,-.021,.025,index?materials.outlet:materials.inlet,{},shellStart,shellLength,32);
-    const plunger=ring(node,0,.0045,-.013,.032,materials.steel,{},0,TAU,24);valveNodes.push(plunger);
-    if(!section)ring(node,.0086,.012,.013,.029,materials.copper);
+    const seatZ=-.010,plunger=new THREE.Group();node.add(plunger);
+    const seat=mesh(node,latheShell([[.0025,seatZ-.003],[.006,seatZ-.003],[.006,seatZ+.004],[.0044,seatZ+.004],[.0025,seatZ]],shellStart,shellLength,64),materials.machined);seat.userData.role='valve-seat';
+    const cone=new THREE.CylinderGeometry(.0044,.0025,.004,32);cone.rotateX(Math.PI/2);
+    mesh(plunger,cone,materials.bearing,{z:seatZ+.002});
+    ring(plunger,0,.0044,seatZ+.004,.018,materials.steel,{},0,TAU,32);
+    ring(plunger,0,.0023,.018,.032,materials.bearing,{},0,TAU,24);
+    const helix=new THREE.CatmullRomCurve3(Array.from({length:97},(_,step)=>{const a=step/96*TAU*6;return new THREE.Vector3(Math.cos(a)*.0037,Math.sin(a)*.0037,step/96*.014);}));
+    const spring=mesh(node,new THREE.TubeGeometry(helix,96,.0004,6,false),materials.steel,{z:.018});spring.userData.role='valve-return-spring';
+    ring(node,.0025,.0048,.032,.033,materials.machined,{},shellStart,shellLength,32);
+    ring(node,.0088,.012,.008,.027,materials.copper,{},shellStart,shellLength,48);
+    for(const z of [.007,.027])ring(node,.0086,.0126,z,z+.0012,materials.black,{},shellStart,shellLength,48);
+    valveNodes.push({plunger,spring,seatZ,openLift:.003,index});
   }
   const pump=makePart('pump',[-.239,.060,-.037],[-.09,-.065,0]);
-  ring(pump,0,.023,-.029,.028,materials.pump,{x:hcuCenter.x,y:hcuCenter.y-.054,z:hcuCenter.z},0,TAU,40);
+  const pumpPosition={x:hcuCenter.x,y:hcuCenter.y-.054,z:hcuCenter.z};
+  ring(pump,.015,.023,-.029,.028,materials.pump,pumpPosition,shellStart,shellLength,64);
+  ring(pump,0,.006,-.033,.034,materials.bearing,pumpPosition,0,TAU,32);
+  for(const z of [-.029,.024])ring(pump,.0062,.015,z,z+.004,materials.machined,pumpPosition,shellStart,shellLength,48);
+  for(let i=0;i<8;i++){const a=TAU*i/8;if(section&&((a-shellStart+TAU)%TAU)>shellLength-.2)continue;ring(pump,.008,.0138,-.023,.022,materials.copper,pumpPosition,a,.48,64);}
   for(const x of [-.262,-.216])bolt(hcu,x,.110,-.058,.048,.0045);
   const hose=makePart('hose',[-.086,.222,-.053],[0,.14,.015]);
   const hoseEnd=new THREE.Vector3(-.012,bridgeOuter-.006,-T/2-.043);
@@ -407,11 +449,11 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   if(section)mesh(hcu,new THREE.TubeGeometry(flowCurve,16,.0022,6,false),materials.fluid);
 
   // Static repeated metal is packed; independently moving pistons, boots and valves stay separate.
-  const movingNodes=new Set([...dynamics.map(entry=>entry.node),...valveNodes,hoseMesh]);
+  const movingNodes=new Set([...dynamics.map(entry=>entry.node),...valveNodes.flatMap(entry=>[entry.plunger,entry.spring]),hoseMesh]);
   group.traverse(parent=>{
     if(!parent.isGroup)return;
     const batches=new Map();
-    for(const child of parent.children){if(!child.isMesh||movingNodes.has(child)||Array.isArray(child.material))continue;const batch=batches.get(child.material)??[];batch.push(child);batches.set(child.material,batch);}
+    for(const child of parent.children){if(!child.isMesh||child.isInstancedMesh||movingNodes.has(child)||Array.isArray(child.material))continue;const batch=batches.get(child.material)??[];batch.push(child);batches.set(child.material,batch);}
     for(const [base,nodes] of batches){
       if(nodes.length<2)continue;
       const temporary=nodes.map(node=>{node.updateMatrix();const geometry=node.geometry.index?node.geometry.toNonIndexed():node.geometry.clone();geometry.applyMatrix4(node.matrix);return geometry;});
@@ -422,6 +464,7 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     }
   });
 
+  for(const part of components.values())part.structuralVisible=part.node.visible;
   let currentSnapshot={},currentView=view,disposed=false,lastWheelAngle=0,lastPressure=0;
   const update = (snapshot = {}, nextView = currentView) => {
     if(disposed)return;
@@ -430,6 +473,17 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     for(const part of components.values())part.node.position.copy(part.explode).multiplyScalar(exploded);
     lastWheelAngle=finite(snapshot.wheelAngle,lastWheelAngle);lastPressure=Math.max(0,finite(snapshot.pressure,0));
     for(const spin of spins)spin.rotation.z=lastWheelAngle;
+    const bearingMotion=hubBearingKinematics({wheelAngle:lastWheelAngle,wheelOmega:finite(snapshot.wheelOmega,0)}),instanceMatrix=new THREE.Matrix4();
+    const retained=(angle,radius)=>!section||((angle-shellStart)%TAU+TAU)%TAU>=Math.asin(radius/bearingPitch)&&((angle-shellStart)%TAU+TAU)%TAU<=shellLength-Math.asin(radius/bearingPitch);
+    for(const row of bearingRows){
+      let balls=0,bars=0;row.firstBallPosition=null;
+      for(let i=0;i<12;i++){
+        const start=TAU*i/12+row.offset,angle=start+bearingMotion.cageAngle,x=bearingPitch*Math.cos(angle),y=bearingPitch*Math.sin(angle);
+        if(retained(angle,bearingBallRadius)){instanceMatrix.makeRotationZ(start+bearingMotion.ballWorldAngle);instanceMatrix.setPosition(x,y,0);row.balls.setMatrixAt(balls++,instanceMatrix);if(!row.firstBallPosition){row.firstBallPosition=[x,y,row.z];row.firstBallSpin=start+bearingMotion.ballWorldAngle;}}
+        const barAngle=angle+Math.PI/12;if(retained(barAngle,.00055)){instanceMatrix.makeTranslation(bearingPitch*Math.cos(barAngle),bearingPitch*Math.sin(barAngle),0);row.bars.setMatrixAt(bars++,instanceMatrix);}
+      }
+      row.balls.count=balls;row.bars.count=bars;row.balls.instanceMatrix.needsUpdate=true;row.bars.instanceMatrix.needsUpdate=true;
+    }
     const activity=clamp(lastPressure/8e6,0,1),travel=gap*activity;
     if(settings.caliperType==='floating')for(const id of ['caliper','seals','boots','bleeder'])components.get(id).node.position.z-=travel;
     for(const entry of dynamics){
@@ -450,21 +504,24 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     materials.inlet.emissive.setHex(snapshot.inletOpen===false?0x000000:0x1c7770);materials.inlet.emissiveIntensity=snapshot.inletOpen===false?0:.30;
     materials.outlet.emissive.setHex(snapshot.outletOpen?0xa23b40:0x000000);materials.outlet.emissiveIntensity=snapshot.outletOpen?.50:0;
     materials.pump.emissive.setHex(snapshot.pumpActive?0x4271a2:0x000000);materials.pump.emissiveIntensity=snapshot.pumpActive?.30:0;
-    valveNodes[0].position.z=snapshot.inletOpen===false?-.002:0;valveNodes[1].position.z=snapshot.outletOpen?.003:0;
+    for(const valve of valveNodes){const open=valve.index?snapshot.outletOpen===true:snapshot.inletOpen!==false,lift=open?valve.openLift:0;valve.plunger.position.z=lift;valve.spring.position.z=.018+lift;valve.spring.scale.z=(.014-lift)/.014;}
     group.updateMatrixWorld(true);
   };
-  const getComponents = () => [...components.values()].map(({id,name,description,material,rotates,node})=>({id,name,label:name,description,material,rotates,visible:node.visible}));
+  const getComponents = () => [...components.values()].map(({id,name,description,material,rotates,structuralVisible})=>({id,name,label:name,description,material,rotates,visible:structuralVisible}));
   const getDiagnostics = () => {
-    let triangles=0,meshes=0;group.traverse(node=>{if(node.isMesh){meshes++;triangles+=(node.geometry.index?.count??node.geometry.attributes.position.count)/3;}});
+    let triangles=0,meshes=0;group.traverse(node=>{if(node.isMesh){meshes++;triangles+=(node.geometry.index?.count??node.geometry.attributes.position.count)/3*(node.isInstancedMesh?node.count:1);}});
     const sideArea=diameters.reduce((area,diameter)=>area+Math.PI*(diameter/2)**2,0);
     return {units:'m',axle:'+Z',mode:currentView.mode,caliperType:settings.caliperType,disposed,triangles,meshes,geometries:disposed?0:resources.geometries.size,materials:disposed?0:resources.materials.size,textures:disposed?0:resources.textures.size,representation:getGeometryRepresentation(input),
       rotor:{outerRadius:R,innerRadius:I,thickness:T,plateThickness:plate,ventGap,vanes:vaneCount,cutFaces:cuts.length*2},
       caliper:{pistonCount,diametersPerSide:[...diameters],pistonAreaPerSide:sideArea,wallThickness:.009,floatingSlide:settings.caliperType==='floating'},
       actuation:{illustrative:true,expandedRestGap:gap,pressurePa:lastPressure,bodySlide:settings.caliperType==='floating'?-gap*clamp(lastPressure/8e6,0,1):0},
       rotation:{wheelAngle:lastWheelAngle,rotor:rotorSpin.rotation.z,hub:hubSpin.rotation.z,encoder:encoderSpin.rotation.z},
+      bearing:{...hubBearingKinematics({wheelAngle:lastWheelAngle,wheelOmega:finite(currentSnapshot.wheelOmega,0)}),cutFrame:'stationary',rows:bearingRows.map(row=>({z:row.z,visibleBalls:row.balls.count,firstBallPosition:row.firstBallPosition?.slice()??null,firstBallSpin:row.firstBallSpin}))},
+      encoder:{teeth:ENCODER_TEETH,pulseHz:Math.abs(finite(currentSnapshot.wheelOmega,0))*ENCODER_TEETH/TAU},
+      hydraulics:{illustrativeTravel:true,inlet:{open:currentSnapshot.inletOpen!==false,lift:valveNodes[0].plunger.position.z,seatZ:valveNodes[0].seatZ,tipZ:valveNodes[0].seatZ+valveNodes[0].plunger.position.z},outlet:{open:currentSnapshot.outletOpen===true,lift:valveNodes[1].plunger.position.z,seatZ:valveNodes[1].seatZ,tipZ:valveNodes[1].seatZ+valveNodes[1].plunger.position.z},pumpActive:currentSnapshot.pumpActive===true,pumpSpeedModeled:false},
       snapshot:{pressure:finite(currentSnapshot.pressure,0),clampForce:finite(currentSnapshot.clampForce,0),padNormalForce:currentSnapshot.padNormalForce??null,absPhase:currentSnapshot.absPhase??'off',slip:currentSnapshot.slip??null},componentIds:[...components.keys()]};
   };
-  const dispose = () => {if(disposed)return;disposed=true;for(const resource of [...resources.geometries,...resources.materials,...resources.textures])resource.dispose();};
+  const dispose = () => {if(disposed)return;disposed=true;for(const resource of [...resources.instances,...resources.geometries,...resources.materials,...resources.textures])resource.dispose();};
   update({},view);
   return {group,components,settings,view,update,getComponents,getDiagnostics,dispose};
 }
@@ -492,12 +549,36 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   const rangeNote=document.createElement('div');rangeNote.className='brake-scene-range-note';rangeNote.setAttribute('role','status');rangeNote.hidden=true;host.appendChild(rangeNote);
   const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2(),labelNodes=new Map();
   let settings={},snapshot={},view=normalizeView(),assembly=createBrakeAssembly(settings,view),disposed=false,width=1,height=1,raf=0,dirty=true,buildCount=1,renderCount=0,dragStart=null,signature='',selectionHighlight=null,highlightedId=null,autoFraming=true,needsFit=true,framing=null;
+  let inspection=null;
   scene.add(assembly.group);
   const geometrySignature=()=>JSON.stringify([normalizeGeometrySettings(settings),view.mode==='cutaway',view.mode==='cutaway'?Math.round(view.cutaway*100)/100:0]);
   signature=geometrySignature();
   const cameras={isometric:[.36,.23,.73],front:[0,0,1],rear:[-.12,.14,-1],side:[1,.15,.015],top:[.01,1,.06]};
-  function frameSubject(subject=assembly.group){framing=fitBrakeCamera(camera,subject,{aspect:width/height,direction:new THREE.Vector3(...cameras[view.camera]),fill:.72});controls.target.copy(framing.target);controls.update();dirty=true;}
+  function frameSubject(subject=assembly.group,direction=cameras[view.camera]){framing=fitBrakeCamera(camera,subject,{aspect:width/height,direction:new THREE.Vector3(...direction),fill:.72});controls.target.copy(framing.target);controls.update();dirty=true;}
   function setCamera(name='isometric'){view.camera=cameras[name]?name:'isometric';autoFraming=true;frameSubject();needsFit=false;}
+  function applyInspection(){
+    if(!inspection)return;
+    const part=assembly.components.get(inspection.partId);if(!part?.structuralVisible){restoreInspection();return;}
+    const visible=new Set([inspection.partId,...(inspection.partId==='valves'?['hydraulic-unit']:[])]);
+    for(const item of assembly.components.values())item.node.visible=item.structuralVisible&&visible.has(item.id);
+    floor.visible=false;grid.visible=false;
+    note.textContent=inspection.partId==='bearing'?'접촉각 0° · 미끄럼 없는 대표 베어링 운동':inspection.partId==='valves'?'밸브 이동량은 확대한 작동 표현':inspection.partId==='pump'?'펌프는 계산된 가동 상태만 표시 · 회전수 미지정':'대표 부품 형상 · 제조용 CAD 아님';
+  }
+  function inspectPart(id){
+    const part=assembly.components.get(id);if(disposed||!part?.structuralVisible)return false;
+    if(!inspection)inspection={partId:id,position:camera.position.clone(),quaternion:camera.quaternion.clone(),target:controls.target.clone(),camera:view.camera,autoFraming,framing,visibility:new Map([...assembly.components].map(([key,value])=>[key,value.node.visible])),floor:floor.visible,grid:grid.visible};
+    else inspection.partId=id;
+    selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;view.selectedPart=id;
+    applyInspection();autoFraming=true;frameSubject(assembly.group,id==='bearing'?[.65,.18,1]:id==='valves'?[.7,.15,1]:cameras[view.camera]);needsFit=false;updateSelection();dirty=true;return true;
+  }
+  function restoreInspection(){
+    if(!inspection||disposed)return false;const saved=inspection;inspection=null;
+    // A geometry rebuild can add formerly absent parts, such as slide pins
+    // when switching from fixed to floating. Restore the current structure.
+    for(const part of assembly.components.values())part.node.visible=part.structuralVisible;
+    floor.visible=saved.floor;grid.visible=saved.grid;note.textContent='피스톤·캘리퍼 이동 간격은 확대한 작동 표현';const damping=controls.enableDamping;controls.enableDamping=false;controls.update();camera.position.copy(saved.position);camera.quaternion.copy(saved.quaternion);controls.target.copy(saved.target);view.camera=saved.camera;autoFraming=saved.autoFraming;framing=saved.framing;needsFit=false;controls.update();controls.enableDamping=damping;camera.updateMatrixWorld(true);
+    selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;updateSelection();dirty=true;return true;
+  }
   function syncLabels(){
     for(const value of labelNodes.values()){value.button.remove();value.line.remove();}labelNodes.clear();
     for(const part of assembly.components.values()){
@@ -534,18 +615,18 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
     labels.dataset.visibleCount=String(placements.length);
   }
   function applyQuality(){const high=view.quality==='high',low=view.quality==='low';renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,low?1:high?1.75:1.35));renderer.shadowMap.enabled=!low;key.shadow.mapSize.set(high?2048:1024,high?2048:1024);}
-  function rebuildIfNeeded(){const next=geometrySignature();if(next===signature)return;selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;const old=assembly;assembly=createBrakeAssembly(settings,view);scene.remove(old.group);old.dispose();scene.add(assembly.group);signature=next;buildCount++;syncLabels();needsFit=true;}
+  function rebuildIfNeeded(){const next=geometrySignature();if(next===signature)return;selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;const old=assembly;assembly=createBrakeAssembly(settings,view);scene.remove(old.group);old.dispose();scene.add(assembly.group);signature=next;buildCount++;syncLabels();applyInspection();needsFit=true;}
   function updateRangeNote(){const representation=getGeometryRepresentation(settings);rangeNote.hidden=!representation.representative;rangeNote.textContent='일부 치수는 대표 형상 · 계산값 유지';rangeNote.title=representation.changes.map(change=>`${change.label}: 계산 ${change.requested} → 그림 ${change.rendered}${change.field.includes('Count')?'개/측':' m'}`).join('\n');host.dataset.representativeGeometry=String(representation.representative);}
   function setState(nextSnapshot={},nextSettings=settings,nextView){if(disposed)return;const oldMode=view.mode;snapshot={...nextSnapshot};settings={...nextSettings};if(nextView)view=normalizeView({...view,...nextView});rebuildIfNeeded();assembly.update(snapshot,view);if((needsFit&&autoFraming)||oldMode!==view.mode)setCamera(view.camera);updateSelection();updateRangeNote();const phases={increase:'압력 증가',hold:'압력 유지',decrease:'감압',off:'ABS 꺼짐','low-speed':'정지 근처',stopped:'정지'};stateBadge.textContent=`${(Math.max(0,finite(snapshot.pressure,0))/1e5).toFixed(1)} bar · ${phases[snapshot.absPhase]??'대기'}`;dirty=true;}
   function setView(partial={}){if(disposed)return;const oldQuality=view.quality,oldMode=view.mode;view=normalizeView({...view,...partial});rebuildIfNeeded();assembly.update(snapshot,view);updateSelection();if(partial.camera||oldMode!==view.mode||needsFit&&autoFraming)setCamera(view.camera);if(view.quality!==oldQuality){applyQuality();resize();}dirty=true;}
   function resize(){if(disposed)return;width=Math.max(1,host.clientWidth);height=Math.max(1,host.clientHeight);camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height,false);if(autoFraming)frameSubject();dirty=true;}
-  function focus(id){const part=assembly.components.get(id);if(!part?.node.visible)return false;view.selectedPart=id;updateSelection();dirty=true;return true;}
+  function focus(id){const part=assembly.components.get(id);if(!part?.structuralVisible)return false;view.selectedPart=id;updateSelection();dirty=true;return true;}
   function render(){if(disposed)return;const changed=controls.update();if(dirty||changed){renderer.render(scene,camera);updateLabels();renderCount++;dirty=false;}raf=requestAnimationFrame(render);}
   function pointerDown(event){dragStart={x:event.clientX,y:event.clientY};}
-  function pointerUp(event){if(!dragStart||Math.hypot(event.clientX-dragStart.x,event.clientY-dragStart.y)>5){dragStart=null;return;}dragStart=null;const rect=renderer.domElement.getBoundingClientRect();pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);raycaster.setFromCamera(pointer,camera);const hit=raycaster.intersectObject(assembly.group,true).find(value=>value.object.isMesh);if(!hit)return;let node=hit.object;while(node&&!node.userData.componentId)node=node.parent;if(node?.userData.componentId)select(node.userData.componentId);}
+  function pointerUp(event){if(!dragStart||Math.hypot(event.clientX-dragStart.x,event.clientY-dragStart.y)>5){dragStart=null;return;}dragStart=null;const rect=renderer.domElement.getBoundingClientRect();pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);raycaster.setFromCamera(pointer,camera);const hit=raycaster.intersectObject(assembly.group,true).find(value=>{for(let node=value.object;node;node=node.parent)if(!node.visible)return false;return value.object.isMesh;});if(!hit)return;let node=hit.object;while(node&&!node.userData.componentId)node=node.parent;if(node?.userData.componentId)select(node.userData.componentId);}
   renderer.domElement.addEventListener('pointerdown',pointerDown);renderer.domElement.addEventListener('pointerup',pointerUp);
   const observer=typeof ResizeObserver==='function'?new ResizeObserver(resize):null;observer?.observe(host);
   controls.addEventListener('change',()=>{dirty=true;});controls.addEventListener('start',()=>{autoFraming=false;});syncLabels();applyQuality();resize();setCamera(view.camera);setState();render();
   const dispose=()=>{if(disposed)return;disposed=true;cancelAnimationFrame(raf);observer?.disconnect();renderer.domElement.removeEventListener('pointerdown',pointerDown);renderer.domElement.removeEventListener('pointerup',pointerUp);controls.dispose();selectionHighlight?.dispose();assembly.dispose();floorGeometry.dispose();floorMaterial.dispose();grid.geometry.dispose();grid.material.dispose();environment.dispose();key.shadow.map?.dispose();renderer.dispose();renderer.forceContextLoss();for(const element of [renderer.domElement,labels,svg,note,stateBadge,rangeNote])element.remove();};
-  return {setState,setView,resize,dispose,focus,setCamera,getComponents:()=>assembly.getComponents(),getDiagnostics:()=>({...assembly.getDiagnostics(),disposed,buildCount,renderCount,canvas:{width,height,pixelRatio:renderer.getPixelRatio()},camera:view.camera,cameraPose:{position:camera.position.toArray(),target:controls.target.toArray()},autoFraming,selectedPart:view.selectedPart,selection:{style:selectionHighlight?.style??'none',box:false},framing:framing?{distance:framing.distance,subjectFill:framing.subjectFill}:null,labels:{enabled:!!view.labels,visible:Number(labels.dataset.visibleCount??0)},renderer:{calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures},webgl2:true})};
+  return {setState,setView,resize,dispose,focus,setCamera,inspectPart,restoreInspection,getComponents:()=>assembly.getComponents(),getDiagnostics:()=>({...assembly.getDiagnostics(),disposed,buildCount,renderCount,canvas:{width,height,pixelRatio:renderer.getPixelRatio()},camera:view.camera,cameraPose:{position:camera.position.toArray(),target:controls.target.toArray()},autoFraming,selectedPart:view.selectedPart,inspection:{active:!!inspection,partId:inspection?.partId??null},selection:{style:selectionHighlight?.style??'none',box:false},framing:framing?{distance:framing.distance,subjectFill:framing.subjectFill}:null,labels:{enabled:!!view.labels,visible:Number(labels.dataset.visibleCount??0)},renderer:{calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures},webgl2:true})};
 }
