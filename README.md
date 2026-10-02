@@ -1,16 +1,16 @@
 # Brake Lab
 
-현재 소스는 **1.1.0 디테일 개선 검토본**입니다. 베어링의 회전·구름과 궤도 홈, ABS 밸브 내부 작동, 선택 부품 확대·실시간 관측값, 누적 에너지 배분을 개선합니다. 수치 해석 모형 `brake-1.0.0`과 저장된 실험은 유지합니다. [개선 내용과 검증](docs/detail-refinement.md)을 참고하세요. 아래 설치 안내는 이미 공개된 **1.0.0 릴리스** 기준이며, 소스 변경이 기존 설치파일을 대체하지 않습니다.
+**[1.1.0 정식 릴리스](https://github.com/Ulsancl/brake-lab/releases/tag/v1.1.0)**는 베어링의 회전·구름과 궤도 홈, ABS 밸브 내부 작동, 선택 부품 확대·실시간 관측값, 누적 에너지 배분을 개선했습니다. 수치 해석 모형 `brake-1.0.0`과 저장된 실험은 유지합니다. [개선 내용과 검증](docs/detail-refinement.md)을 참고하세요. 이전 1.0.0의 설치 검증 기록은 과거 기록이며, 1.1.0의 실제 설치·업데이트를 새로 실측했다는 뜻은 아닙니다.
 
 ![1.1 베어링 상세 관찰](public/screenshots/bearing-detail-v1.1.png)
 
 ![1.1 ABS 밸브 내부 관찰](public/screenshots/abs-valve-detail-v1.1.png)
 
-**Brake Lab 1.0.0**은 브레이크 구조와 ABS의 작동을 직접 살펴보고, 조건을 바꾸어 제동 결과를 비교하는 **Windows x64용 오프라인 시뮬레이션 앱**입니다.
+**Brake Lab 1.1.0**은 브레이크 구조와 ABS의 작동을 직접 살펴보고, 조건을 바꾸어 제동 결과를 비교하는 **Windows x64용 오프라인 시뮬레이션 앱**입니다.
 
-**[Windows 설치파일 다운로드](https://github.com/Ulsancl/brake-lab/releases/latest)**
+**[Windows 설치파일 다운로드](https://github.com/Ulsancl/brake-lab/releases/tag/v1.1.0)**
 
-릴리스에서 `Brake-Lab-Setup-1.0.0.exe`를 받아 실행하고 설치 위치를 선택하세요. 설치 후 바탕화면이나 시작 메뉴의 **Brake Lab** 아이콘으로 시작합니다. Node.js 설치나 별도 서버 실행이 필요 없으며, 계산과 3D 화면이 앱에 포함되어 인터넷 연결 없이 사용할 수 있습니다. 설치파일에는 코드 서명이 없습니다.
+릴리스에서 `Brake-Lab-Setup-1.1.0.exe`와 같은 이름의 `.sha256` 확인 파일을 받아 확인한 뒤 실행하고 설치 위치를 선택하세요. 설치 후 바탕화면이나 시작 메뉴의 **Brake Lab** 아이콘으로 시작합니다. Node.js 설치나 별도 서버 실행이 필요 없으며, 계산과 3D 화면이 앱에 포함되어 인터넷 연결 없이 사용할 수 있습니다. 설치파일에는 코드 서명이 없습니다.
 
 처음 비교를 실행하면 결과가 바로 보이도록 화면이 이동합니다. 저장된 결과를 바탕으로 더 짧은 거리·더 긴 거리·비슷한 거리·정지 미완료를 쉬운 문장으로 설명합니다. 처음부터 정지한 조건도 별도로 안내하며, 원래 조건과 상세 수치는 그대로 표시합니다.
 
@@ -38,4 +38,4 @@
 
 ## 소스 검증 환경
 
-Node.js 24.19.0 이상을 사용합니다. `npm ci`, `npm test`, `npm run build`, `npm run test:browser`, `npm run test:detail`로 계산·형상·화면을 검증합니다. Windows 앱은 `node scripts/desktop.mjs prepare-test` 후 `npm run test:desktop`으로 확인하고 `npm run package:desktop`으로 설치파일을 만듭니다. 기존 1.0.0 공개 설치 안내와 1.1.0 소스 검증 결과를 구분하세요.
+Node.js 24.19.0 이상을 사용합니다. `npm ci`, `npm test`, `npm run build`, `npm run test:browser`, `npm run test:detail`로 계산·형상·화면을 검증합니다. Windows 앱은 `node scripts/desktop.mjs prepare-test` 후 `npm run test:desktop`으로 확인하고 `npm run package:desktop`으로 설치파일을 만듭니다. 1.1.0의 소스·독립 실행본 검증과 이전 1.0.0의 실제 설치 검증 기록을 구분합니다.
