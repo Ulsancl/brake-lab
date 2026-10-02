@@ -2,11 +2,14 @@ import './style.css';
 import './scene.css';
 import './recovery.css';
 import './comparison.css';
+import './detail.css';
 import {defaultSettings,normalizeSettings,createSimulation,compareAbs,MODEL_VERSION} from './model.js';
 import {createBrakeScene} from './scene.js';
 import {projectFormat,parseProject,makeProject} from './project.js';
 import {describeComparison} from './comparison-summary.js';
 import {describeComparisonEnergy} from './comparison-energy.js';
+import {brakeDetail} from './detail-readouts.js';
+import {renderBrakeDetails} from './detail-panel.js';
 
 const $=selector=>document.querySelector(selector),all=selector=>[...document.querySelectorAll(selector)];
 const storageKey='brake-lab-project-v1',format=projectFormat;
@@ -14,7 +17,7 @@ const number=(v,d=1)=>Number.isFinite(v)?v.toLocaleString('ko-KR',{minimumFracti
 const toast=(message,context='notice')=>{const node=$('#toast');node.textContent=message;node.dataset.context=context;node.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.hidden=true,5000);};
 function dismissComparisonNotice(){if($('#toast').dataset.context==='comparison'){$('#toast').hidden=true;clearTimeout(toast.timer);}}
 let settings=normalizeSettings(defaultSettings),comparison=null,view={mode:'cutaway',cutaway:.65,explode:.5,labels:true,selectedPart:'rotor',quality:'auto',camera:'isometric'};
-let storageBlocked=false,storageMessage='',recoveryOriginal=null,running=false,last=0,accumulator=0,rate=.25,focused=false,loadSequence=0;
+let storageBlocked=false,storageMessage='',recoveryOriginal=null,running=false,last=0,accumulator=0,rate=.25,focused=false,loadSequence=0,externalClock=false;
 try{
  const raw=localStorage.getItem(storageKey);
  if(raw){
@@ -45,7 +48,7 @@ function syncInputs(){
  all('[data-mode]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.mode===view.mode)));
  $('#explode').value=view.explode;$('#explode').disabled=view.mode!=='exploded';$('#labels').checked=view.labels;
 }
-function setRunning(value){running=Boolean(value)&&!snapshot.stopped;last=performance.now();const paused=!running&&!snapshot.stopped&&snapshot.time>0;$('#start').textContent=running?'일시정지':snapshot.stopped?'다시 제동':paused?'이어서 제동':'제동 시작';$('#start').setAttribute('aria-pressed',String(running));$('#run-status').textContent=running?'제동 중':snapshot.stopped?'정지 완료':paused?'일시정지':'준비';syncFocusPanel();}
+function setRunning(value){externalClock=false;running=Boolean(value)&&!snapshot.stopped;last=performance.now();const paused=!running&&!snapshot.stopped&&snapshot.time>0;$('#start').textContent=running?'일시정지':snapshot.stopped?'다시 제동':paused?'이어서 제동':'제동 시작';$('#start').setAttribute('aria-pressed',String(running));$('#run-status').textContent=running?'제동 중':snapshot.stopped?'정지 완료':paused?'일시정지':'준비';syncFocusPanel();}
 function syncFocusPanel(){
  $('#focus-play').textContent=$('#start').textContent;$('#focus-play').setAttribute('aria-pressed',String(running));$('#focus-status').textContent=$('#run-status').textContent;$('#focus-rate').value=String(rate);
  if($('#focus-part').value!==view.selectedPart)$('#focus-part').value=view.selectedPart;const description=$('#part-description').textContent,facts=[...$('#part-facts').children].map(node=>node.textContent).join(' · ');if($('#focus-part-description').textContent!==description)$('#focus-part-description').textContent=description;if($('#focus-part-facts').textContent!==facts)$('#focus-part-facts').textContent=facts;
@@ -76,6 +79,8 @@ function render(){
  $('#inlet').textContent='입구 '+(snapshot.inletOpen?'열림':'닫힘');$('#inlet').classList.toggle('active',!!snapshot.inletOpen);$('#outlet').textContent='출구 '+(snapshot.outletOpen?'열림':'닫힘');$('#outlet').classList.toggle('active',!!snapshot.outletOpen);$('#pump').classList.toggle('active',!!snapshot.pumpActive);$('#pump').textContent=snapshot.pumpActive?'환류 펌프 작동':'환류 펌프 대기';$('#caliper-pressure').textContent='캘리퍼 '+number(snapshot.pressure/1e5)+' bar';
  $('#force-readout').textContent='브레이크 토크 '+number(snapshot.brakeTorque,0)+' N·m · 노면 제동력 '+number(snapshot.tireForce,0)+' N · 경과 '+number(snapshot.time,2)+' s';
  scene?.setState(snapshot,settings,view);
+ if(scene)view.camera=scene.getDiagnostics().camera;
+ renderBrakeDetails(view.selectedPart,snapshot,settings,scene?.getDiagnostics().inspection);
  syncFocusPanel();
 }
 function advance(seconds){
@@ -114,7 +119,10 @@ window.brakeDesktop?.onCommand(command=>{if(command==='save-project')void savePr
 $('#storage-recovery').hidden=recoveryOriginal===null;$('#recover-original').onclick=()=>{if(recoveryOriginal===null)return;download(recoveryOriginal,'이전 브레이크 저장 원문.txt','text/plain;charset=utf-8');toast('이전 저장 원문을 파일로 저장하기 시작했습니다.');};
 document.addEventListener('visibilitychange',()=>{last=performance.now();});window.addEventListener('resize',()=>{scene?.resize();drawTrace();});
 $('#focus-play').onclick=()=>$('#start').click();$('#focus-part').onchange=event=>selectPart(event.target.value);$('#focus-rate').onchange=event=>{rate=Number(event.target.value);$('#playback-rate').value=String(rate);last=performance.now();syncFocusPanel();};$('#focus-pressure').oninput=event=>setSettings({pressureBar:Number(event.target.value)});
+function restoreInspection(){scene?.restoreInspection();if(scene)view.camera=scene.getDiagnostics().camera;render();}
+function inspectSelectedPart(){const inspection=scene?.getDiagnostics().inspection;if(inspection?.active&&inspection.partId===view.selectedPart){restoreInspection();return;}scene?.inspectPart(view.selectedPart);render();}
+$('#inspect-part').onclick=inspectSelectedPart;$('#focus-inspect-part').onclick=inspectSelectedPart;$('#restore-inspection').onclick=restoreInspection;
 syncInputs();render();updateParts();showComparison();setRunning(false);render();persist();
-function frame(now){const elapsed=last?Math.max(0,(now-last)/1000):0;last=now;if(running&&!document.hidden){if(elapsed>1){setRunning(false);toast('화면이 오래 지연되어 일시정지했습니다. '+$('#start').textContent+'을 눌러 이어가세요.');}else advance(elapsed*rate);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
-window.brakeLab={getState:()=>({settings:structuredClone(settings),snapshot:structuredClone(snapshot),view:{...view},running,focused,scene:scene?.getDiagnostics(),hasComparison:!!comparison,storageBlocked}),setSettings,reset,advance,runComparison,project,loadProject,selectPart,toggleFocus,scene};
-window.advanceTime=ms=>{if(running)advance(ms/1000*rate);else render();};window.render_game_to_text=()=>JSON.stringify({model:MODEL_VERSION,coordinateSystem:'m, s, N, Pa; +Z wheel axle, +Y up; one-wheel straight braking',running,focused,settings,snapshot,view,hasComparison:!!comparison});
+function frame(now){const elapsed=last?Math.max(0,(now-last)/1000):0;last=now;if(running&&!document.hidden&&!externalClock){if(elapsed>1){setRunning(false);toast('화면이 오래 지연되어 일시정지했습니다. '+$('#start').textContent+'을 눌러 이어가세요.');}else advance(elapsed*rate);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+window.brakeLab={getState:()=>({settings:structuredClone(settings),snapshot:structuredClone(snapshot),detail:brakeDetail(snapshot,settings),view:{...view},running,focused,scene:scene?.getDiagnostics(),hasComparison:!!comparison,storageBlocked}),setSettings,reset,advance,runComparison,project,loadProject,selectPart,toggleFocus,scene};
+window.advanceTime=ms=>{if(!Number.isFinite(ms)||ms<0||ms>60000)throw new Error('진행 시간은 0–60000 밀리초여야 합니다.');externalClock=true;if(running)advance(ms/1000*rate);else render();};window.render_game_to_text=()=>JSON.stringify({model:MODEL_VERSION,coordinateSystem:'m, s, N, Pa; +Z wheel axle, +Y up; one-wheel straight braking',running,focused,settings,snapshot,detail:brakeDetail(snapshot,settings),view,inspection:scene?.getDiagnostics().inspection,hasComparison:!!comparison});

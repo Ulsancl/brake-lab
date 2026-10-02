@@ -82,6 +82,50 @@ energyResidual = 초기 운동에너지 − 현재 운동에너지
 
 모든 설정과 결과는 깊게 동결한다. 외부 입력 배열이나 이전 결과의 변경이 진행 중인 실험에 영향을 주지 않는다. 부품의 시각화 위치·카메라·확대 관찰 배율은 물리 상태에 영향을 주지 않는다.
 
+## 1.1 상세 관측값
+
+앱 1.1의 `brakeDetail(snapshot, settings)`는 이미 계산된 상태를 읽는 순수 함수다. `src/detail-model.js`에 있으며 `src/detail-readouts.js`에서도 다시 내보낸다. 원래 `brake-1.0.0` 적분식·기본값·제어·정지 기준을 변경하지 않는다. 입력 상태가 없거나 필요한 수치가 비유한 값이면 `null`을 반환한다. `describeBrakeDetail(partId, snapshot, settings)`는 최대 6개의 `{label,value,unit,digits}` 관측 항목과 해석 주의문 `note`를 반환한다. 수치는 표시 직전까지 숫자로 유지하며, 유효하지 않은 상태는 빈 목록과 상태 확인 문구로 처리한다.
+
+### 힘·회전·동력
+
+`caliper.hydraulicAreaPerSideM2`는 한쪽 피스톤 면적 합이다. 플로팅형 실제 피스톤 총 면적은 이 값이고, 대향 고정형 실제 총 면적은 두 배다. 두 구성 모두 양쪽 패드 수직력 합에 사용하는 `effectiveClampAreaM2`는 한쪽 면적 합의 두 배다. 실제 피스톤 수와 압착 유효 면적을 혼동하지 않는다. 기본 고정형과 플로팅형의 압착 유효 면적은 같으며 정상력·토크 용량도 같다. 관측값은 계산 설정의 치수를 사용한다. 장면의 대표 형상 범위로 치수를 제한했더라도 계산값을 그 범위로 바꾸지 않는다.
+
+`rotor.meanSurfaceSpeedMps = padMeanRadius × wheelOmega`는 평균 접촉 반경에서의 로터 선속도이고 차량 속도가 아니다. `brakePowerW = brakeTorque × wheelOmega`는 **실제 제동 토크**로 구한다. 잠긴 바퀴는 압력과 토크 용량이 커도 로터 각속도가 0이므로 마찰 제동 동력은 0이다. 이때 차량이 움직이면 `wheel.tireLossPowerW = tireForce × (speed − wheelRadius × wheelOmega)`가 양수가 되어 에너지를 소모한다. 정지 토크 용량 전체를 순간 열 발생률로 잘못 사용하지 않는다.
+
+`pads.actualTangentialForceN = brakeTorque / padMeanRadius`는 양쪽 패드를 합한 등가 접선력이고 개별 접촉점의 힘이 아니다. 패드 면적은 물리 입력에 없으므로 대표 형상을 이용한 접촉 압력·평균 면압·허용 응력을 만들지 않는다. `contactPressureSolved`는 `false`다.
+
+### 디스크 평균 열수지
+
+진행 중일 때 관측값은 다음과 같다. SI 수치는 W, J, K/s이며 표시할 때 kW, kJ, °C/s로 변환한다.
+
+```
+heatInputW = discHeatShare × brakePowerW
+coolingPowerW = coolingWattsPerK × (discTemperatureC − ambientTemperatureC)
+heatCapacityJPerK = discMass × discHeatCapacity
+bulkTemperatureRateKPerS = (heatInputW − coolingPowerW) / heatCapacityJPerK
+absorbedHeatJ = discHeatShare × brakeHeat
+storedHeatJ = heatCapacityJPerK × (discTemperatureC − initialTemperatureC)
+thermalClosureJ = storedHeatJ − absorbedHeatJ + discCoolingEnergy
+```
+
+주변으로의 열교환률은 부호가 있다. 디스크가 주변보다 차가우면 음수이며 주변에서 열을 받는다. `storedHeatJ` 역시 출발 온도 대비 변화량이어서 냉각 시 음수가 될 수 있다. `thermalClosureJ`는 기존 `thermalResidual`과 같다. `surfaceTemperatureSolved=false`는 마찰면 최고 온도·열점·열응력·페이드가 해석되지 않음을 명시한다.
+
+**정지 완료 뒤에는 기존 `step()`이 전체 상태를 고정한다.** 따라서 새 관측값도 `coolingPowerW`, `bulkTemperatureRateKPerS`, `pressureRatePaPerS`를 0으로 표시한다. 주변보다 뜨거운 정지 디스크를 실제로 냉각시키는 후속 시간 해석이 추가된 것은 아니다. 누적 열·열교환 에너지와 마지막 평균 온도는 보존한다.
+
+### ABS·센서·베어링
+
+`hydraulics.pressureRatePaPerS`는 **현재 기록된 제어 단계**에서의 도함수다. 감소는 `−P/pressureDumpTime`, 유지는 0, 증가·ABS 끔·저속 복귀는 `(commandedPressure−P)/pressureFillTime`이다. 5 ms마다 다음 단계를 선택하므로 이 값은 다음 순간의 제어 전환을 예측하지 않는다. 슬립이 표시 불가인 0.5 m/s 미만에서는 `hydraulics.slip`과 `slipError`를 `null`로 유지한다. 목표 범위는 현재 합성 곡선의 피크 슬립 ± 설정 band다. 유량·펌프 RPM·펌프 소비 동력은 만들지 않으며 `flowSolved=false`다.
+
+장면에 실제로 있는 대표 인코더 톱니는 48개다. `src/mechanical-detail.js`의 `ENCODER_TEETH`를 장면과 관측값이 공유하며 `encoder.pulseHz = 48 × |wheelOmega| / (2π)`다. 이는 톱니 통과 빈도이고 샘플링·신호 파형·잡음·측정 오차를 포함한 센서 출력은 아니다. 실제 ABS의 차량 속도 추정도 추가하지 않는다.
+
+두 줄 허브 베어링은 장면의 대표 볼 중심 반경 R=0.0321 m와 볼 반경 r=0.0048 m를 사용한다. 외륜 고정, 접촉각 0°, 미끄럼 없는 운동을 가정한 `hubBearingKinematics`를 장면과 관측값이 공유한다. q=r/R일 때 케이지 속도는 내륜 속도의 `(1−q)/2`, 케이지에 대한 볼 자전 속도는 내륜 속도의 `−(1/q−q)/2`이고, 고정 좌표에서의 볼 자전은 두 속도의 합이다. 이는 기하적 운동 관계이며 실제 복열 각접촉 허브 베어링의 하중·예압·수명 계산이 아니다.
+
+### 에너지 분배 표시와 검증
+
+`energy`는 초기·현재 운동에너지, 누적 브레이크 열, 누적 타이어 손실, 정지 잔존 에너지와 수치 투영 에너지를 J로 제공한다. `accountedJ`는 현재 운동에너지와 네 소모·잔존 항목의 합이며 `initialJ − accountedJ = residualJ`다. **디스크 축적 열·냉각 에너지는 이미 브레이크 열 안의 배분이므로 전체 에너지 막대에 다시 더하지 않는다.** 초기 운동에너지가 0인 경우에는 분율을 만들기 위해 0으로 나누지 않는다.
+
+`tests/detail-model.test.mjs`는 독립적인 피스톤 면적과 힘·토크 복원, 기본 두 캘리퍼의 동등성, 압력의 해석적 지수 변화, 무제동 냉각의 해석해, 잠김 상태의 0 마찰 동력, 기계·열수지, 정지/저속 구분, 인코더 빈도와 양쪽 베어링 접촉 속도, 표시 단위·비변경성을 검증한다. 압력 적분과 해석해의 비교 오차는 RK4의 5차 나머지 상한을 사용한다.
+
 ## 참고한 공식 자료
 
 - [MathWorks Disc Brake](https://www.mathworks.com/help/sdl/ref/discbrake.html): 압력·피스톤 면적·패드 평균 반경과 토크, 정지 마찰 반작용의 개념.

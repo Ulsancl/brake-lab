@@ -1,0 +1,32 @@
+.component-details{border-top:1px solid var(--line);padding:12px 0;margin:0 0 12px}
+.component-details h3{font-size:11px;font-weight:600;color:var(--accent);margin:0 0 8px;letter-spacing:.3px}
+.detail-facts{margin:0;display:grid;gap:6px;font-variant-numeric:tabular-nums}
+.detail-fact{display:flex;justify-content:space-between;align-items:baseline;gap:8px;border-bottom:1px solid #2b3c455e;padding:4px 0}
+.detail-fact dt{font-size:10px;color:#9eb5c1;max-width:60%}
+.detail-fact dd{font-size:12px;color:#e5f3f4;text-align:right;margin:0;overflow-wrap:anywhere}
+.detail-note{font-size:10px;line-height:1.65;color:#a1b8c3;margin:9px 0}
+.inspect-button{width:100%;font-size:11px;padding:8px;margin-top:6px;border-color:#427c76;color:#c9eee7}
+.focus-part .detail-note{height:auto;max-height:none;overflow:visible;font-size:10px;margin:7px 0}
+.focus-component-details{margin-top:8px;padding-top:7px}
+.focus-component-details summary{font-size:11px}
+.focus-component-details .detail-facts{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 14px;margin-top:7px}
+.focus-component-details .detail-fact{display:block}
+.focus-component-details .detail-fact dt{max-width:none}
+.focus-component-details .detail-fact dd{text-align:left;margin-top:2px}
+.scene-focus .focus-panel{max-height:43vh;overflow-y:auto}
+.energy-observation{background:#182832;border:1px solid var(--line);border-radius:10px;margin-top:12px;padding:13px}
+.energy-heading{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:12px}
+.energy-heading span{font-size:11px;color:#adc1cc;font-variant-numeric:tabular-nums}
+.energy-bar{height:10px;margin:13px 0 10px;border-radius:5px;overflow:hidden;display:flex;background:#263b49}
+.energy-bar span{height:100%;flex:none}
+[data-energy-segment=kinetic],.energy-legend .kinetic{background:#79adc7}
+[data-energy-segment=brake],.energy-legend .brake{background:#e8a26b}
+[data-energy-segment=tire],.energy-legend .tire{background:#c484a5}
+[data-energy-segment=cutoff],.energy-legend .cutoff{background:#9fadb3}
+.energy-legend{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;font-size:10px;color:#acc2cd}
+.energy-legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px}
+.energy-legend b{display:block;color:#e0eaee;font-size:13px;font-weight:500;margin:4px 0;font-variant-numeric:tabular-nums}
+.energy-caption{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:10px;line-height:1.5}
+.scene-focus .energy-observation{display:none}
+@media(max-width:1150px) and (min-width:721px){.inspector .component-details{grid-column:1;grid-row:2/5}.inspector #parts-list{grid-column:2;grid-row:2/6}.inspector #part-facts{grid-column:2;grid-row:1}}
+@media(max-width:720px){.energy-legend{grid-template-columns:repeat(2,minmax(0,1fr))}.focus-component-details .detail-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.scene-focus .focus-panel{max-height:46vh}.focus-part .inspect-button{margin-top:3px;padding:6px}}
