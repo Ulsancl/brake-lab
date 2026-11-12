@@ -1,3 +1,4 @@
+import { artifactDirectory } from '../scripts/safe-files.mjs';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import fs from 'node:fs/promises';
@@ -6,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 const root=path.resolve(import.meta.dirname,'..');
-const output=path.join(root,'output','browser-consumer');
+const output = artifactDirectory(root, path.join(root,'output','browser-consumer'));
 await fs.mkdir(output,{recursive:true});
 const server=await createServer({root,server:{host:'127.0.0.1',port:5197,strictPort:true}});
 await server.listen();
