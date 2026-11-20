@@ -26,6 +26,15 @@ test('canonical settings comparison ignores object key order', () => {
   assert.deepEqual(parseProject(JSON.stringify(data)).comparison, data.comparison);
 });
 
+test('one UTF-8 BOM does not change the project or hide a future version', () => {
+  const project = makeProject({ speedKmh: 65 });
+  const text = JSON.stringify(project);
+  assert.deepEqual(parseProject('\uFEFF' + text), parseProject(text));
+  rejects('\uFEFF' + JSON.stringify({ ...project, version: projectVersion + 1 }), 'FUTURE_SCHEMA');
+  rejects('\uFEFF\uFEFF' + text, 'INVALID_JSON');
+  rejects('\uFEFF' + text.padEnd(10 * 1024 * 1024 - 2, ' '), 'PROJECT_TOO_LARGE');
+});
+
 test('no comparison is valid and returned objects do not alias the caller', () => {
   const cfg = normalizeSettings(); const view = { mode: 'assembled' };
   const data = makeProject(cfg, view, null); assert.equal(data.comparison, null);

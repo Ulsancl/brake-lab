@@ -197,7 +197,10 @@ export function parseProject(text, currentView = {}) {
     fail('실험 파일은 10 MiB 이하여야 합니다.', 'PROJECT_TOO_LARGE');
   }
   let data;
-  try { data = JSON.parse(text); } catch { fail('JSON 실험 파일을 읽을 수 없습니다.', 'INVALID_JSON'); }
+  // Windows editors can prefix UTF-8 JSON with a single BOM. Keep it in the
+  // byte-limit check and in the caller's original; skip it only for parsing.
+  try { data = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text); }
+  catch { fail('JSON 실험 파일을 읽을 수 없습니다.', 'INVALID_JSON'); }
   if (!record(data) || data.format !== projectFormat) fail('지원하지 않는 실험 파일 형식입니다.', 'UNSUPPORTED_FORMAT');
   if (Number.isInteger(data.version) && data.version > projectVersion) fail('새로운 저장 형식을 보호합니다.', 'FUTURE_SCHEMA');
   if (data.version !== projectVersion) fail('지원하지 않는 저장 형식 버전입니다.', 'UNSUPPORTED_SCHEMA');

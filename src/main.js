@@ -20,7 +20,7 @@ let settings=normalizeSettings(defaultSettings),comparison=null,view={mode:'cuta
 let storageBlocked=false,storageMessage='',recoveryOriginal=null,running=false,last=0,accumulator=0,rate=.25,focused=false,loadSequence=0,externalClock=false;
 try{
  const raw=localStorage.getItem(storageKey);
- if(raw){
+ if(raw!==null){
   try{const saved=parseProject(raw,view);({settings,comparison,view}=saved);}
   catch(error){
    recoveryOriginal=raw;

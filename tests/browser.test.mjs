@@ -156,7 +156,12 @@ try{
   await page.keyboard.press('Escape');assert.equal((await state()).focused,false);assert.equal(await page.locator('#playback-rate').inputValue(),'1');assert.equal(await page.locator('[data-setting="pressureBar"]').inputValue(),'70');
  });
  await page.close();
- for(const fixture of [{name:'Corrupt automatic save preserves original bytes before replacement',raw:'{broken original',future:false},{name:'Future automatic save stays protected during current-version edits',raw:JSON.stringify({format:'brake-lab-project',version:2,modelVersion:'brake-2.0.0',retained:'future-original'}),future:true}]){
+ for(const fixture of [
+  {name:'Corrupt automatic save preserves original bytes before replacement',raw:'{broken original',future:false},
+  {name:'An empty but existing autosave remains available for recovery',raw:'',future:false},
+  {name:'Future automatic save stays protected during current-version edits',raw:JSON.stringify({format:'brake-lab-project',version:2,modelVersion:'brake-2.0.0',retained:'future-original'}),future:true},
+  {name:'BOM-prefixed future automatic save stays protected during current-version edits',raw:'\uFEFF'+JSON.stringify({format:'brake-lab-project',version:2,modelVersion:'brake-2.0.0',retained:'future-original'}),future:true},
+ ]){
   await record(fixture.name,async()=>{
    const isolated=await browser.newContext({viewport:{width:1366,height:768}});try{
     await isolated.addInitScript(raw=>localStorage.setItem('brake-lab-project-v1',raw),fixture.raw);

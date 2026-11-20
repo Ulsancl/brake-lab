@@ -48,7 +48,7 @@ function jsonText(contents) {
     throw new Error('실험 파일은 10 MiB 이하인 JSON 텍스트여야 합니다.');
   }
   try {
-    const parsed = JSON.parse(contents);
+    const parsed = JSON.parse(contents.charCodeAt(0) === 0xfeff ? contents.slice(1) : contents);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
   } catch { throw new Error('JSON 실험 파일을 읽을 수 없습니다. 원본 파일은 변경하지 않습니다.'); }
   return contents;
