@@ -173,6 +173,35 @@ try{
    }finally{await isolated.close();}
   });
  }
+ record('a stale view edit preserves the newer tab and its own manual export', async () => {
+   const tabs = await browser.newContext({ acceptDownloads: true });
+   const key = 'brake-lab-project-v1';
+   const openTab = async () => {
+     const tab = await tabs.newPage();
+     await tab.goto('http://127.0.0.1:5197/', { waitUntil: 'domcontentloaded' });
+     await tab.waitForFunction(() => !!window.brakeLab);
+     return tab;
+   };
+   try {
+     const stale = await openTab();
+     await stale.evaluate(() => window.brakeLab.setSettings({ pressureBar: 41 }));
+     const current = await openTab();
+     await current.evaluate(() => window.brakeLab.setSettings({ pressureBar: 42 }));
+     const newest = await current.evaluate(key => localStorage.getItem(key), key);
+     assert.equal(JSON.parse(newest).settings.pressureBar, 42);
+     await stale.locator('[data-mode="assembled"]').click();
+     assert.match(await stale.locator('#storage-status').textContent(), /다른 창/);
+     assert.equal(await current.evaluate(key => localStorage.getItem(key), key), newest);
+     const pending = stale.waitForEvent('download'); await stale.locator('#save-project').click();
+     const download = await pending;
+     const exported = JSON.parse(await fs.readFile(await download.path(), 'utf8'));
+     assert.equal(exported.settings.pressureBar, 41);
+     assert.equal(exported.view.mode, 'assembled');
+     const closed = stale.waitForEvent('close');
+     await stale.close({ runBeforeUnload: true }); await closed;
+     assert.equal(await current.evaluate(key => localStorage.getItem(key), key), newest);
+   } finally { await tabs.close(); }
+ });
  await record('No browser errors or failed requests',async()=>assert.deepEqual(errors,[]));
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({checkedAt:new Date().toISOString(),status:'PASSED',checks,errors},null,2));
 }catch(error){
