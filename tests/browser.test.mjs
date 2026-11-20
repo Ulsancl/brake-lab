@@ -173,7 +173,7 @@ try{
    }finally{await isolated.close();}
   });
  }
- record('a stale view edit preserves the newer tab and its own manual export', async () => {
+ await record('a stale view edit preserves the newer tab and its own manual export', async () => {
    const tabs = await browser.newContext({ acceptDownloads: true });
    const key = 'brake-lab-project-v1';
    const openTab = async () => {
