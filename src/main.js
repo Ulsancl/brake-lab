@@ -18,9 +18,11 @@ const toast=(message,context='notice')=>{const node=$('#toast');node.textContent
 function dismissComparisonNotice(){if($('#toast').dataset.context==='comparison'){$('#toast').hidden=true;clearTimeout(toast.timer);}}
 let settings=normalizeSettings(defaultSettings),comparison=null,view={mode:'cutaway',cutaway:.65,explode:.5,labels:true,selectedPart:'rotor',quality:'auto',camera:'isometric'};
 let storageBlocked=false,storageMessage='',recoveryOriginal=null,running=false,last=0,accumulator=0,rate=.25,focused=false,loadSequence=0,externalClock=false;
+let lastPrimary=null;
 try{
  const raw=localStorage.getItem(storageKey);
- if(raw){
+ lastPrimary=raw;
+ if(raw!==null){
   try{const saved=parseProject(raw,view);({settings,comparison,view}=saved);}
   catch(error){
    recoveryOriginal=raw;
@@ -38,7 +40,12 @@ let simulation=createSimulation(settings),snapshot=simulation.snapshot(),scene;
 const project=()=>makeProject(settings,view,comparison);
 function persist(){
  if(storageBlocked){$('#storage-status').textContent=storageMessage;return;}
- try{localStorage.setItem(storageKey,JSON.stringify(project()));$('#storage-status').textContent=storageMessage||'이 기기에 자동 저장됨';}
+ try{
+  // A stale view or condition edit must not replace another tab's experiment.
+  if(localStorage.getItem(storageKey)!==lastPrimary){storageBlocked=true;storageMessage='다른 창에서 저장이 변경되었습니다. 이 창의 실험은 파일로 보관해 주세요.';$('#storage-status').textContent=storageMessage;return;}
+  const next=JSON.stringify(project());localStorage.setItem(storageKey,next);lastPrimary=next;
+  $('#storage-status').textContent=storageMessage||'이 기기에 자동 저장됨';
+ }
  catch{storageBlocked=true;storageMessage='자동 저장 공간이 부족합니다. 실험 파일로 보관해 주세요.';$('#storage-status').textContent=storageMessage;toast(storageMessage);}
 }
 function syncInputs(){

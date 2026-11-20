@@ -156,7 +156,12 @@ try{
   await page.keyboard.press('Escape');assert.equal((await state()).focused,false);assert.equal(await page.locator('#playback-rate').inputValue(),'1');assert.equal(await page.locator('[data-setting="pressureBar"]').inputValue(),'70');
  });
  await page.close();
- for(const fixture of [{name:'Corrupt automatic save preserves original bytes before replacement',raw:'{broken original',future:false},{name:'Future automatic save stays protected during current-version edits',raw:JSON.stringify({format:'brake-lab-project',version:2,modelVersion:'brake-2.0.0',retained:'future-original'}),future:true}]){
+ for(const fixture of [
+  {name:'Corrupt automatic save preserves original bytes before replacement',raw:'{broken original',future:false},
+  {name:'An empty but existing autosave remains available for recovery',raw:'',future:false},
+  {name:'Future automatic save stays protected during current-version edits',raw:JSON.stringify({format:'brake-lab-project',version:2,modelVersion:'brake-2.0.0',retained:'future-original'}),future:true},
+  {name:'BOM-prefixed future automatic save stays protected during current-version edits',raw:'\uFEFF'+JSON.stringify({format:'brake-lab-project',version:2,modelVersion:'brake-2.0.0',retained:'future-original'}),future:true},
+ ]){
   await record(fixture.name,async()=>{
    const isolated=await browser.newContext({viewport:{width:1366,height:768}});try{
     await isolated.addInitScript(raw=>localStorage.setItem('brake-lab-project-v1',raw),fixture.raw);
@@ -168,6 +173,35 @@ try{
    }finally{await isolated.close();}
   });
  }
+ await record('a stale view edit preserves the newer tab and its own manual export', async () => {
+   const tabs = await browser.newContext({ acceptDownloads: true });
+   const key = 'brake-lab-project-v1';
+   const openTab = async () => {
+     const tab = await tabs.newPage();
+     await tab.goto('http://127.0.0.1:5197/', { waitUntil: 'domcontentloaded' });
+     await tab.waitForFunction(() => !!window.brakeLab);
+     return tab;
+   };
+   try {
+     const stale = await openTab();
+     await stale.evaluate(() => window.brakeLab.setSettings({ pressureBar: 41 }));
+     const current = await openTab();
+     await current.evaluate(() => window.brakeLab.setSettings({ pressureBar: 42 }));
+     const newest = await current.evaluate(key => localStorage.getItem(key), key);
+     assert.equal(JSON.parse(newest).settings.pressureBar, 42);
+     await stale.locator('[data-mode="assembled"]').click();
+     assert.match(await stale.locator('#storage-status').textContent(), /다른 창/);
+     assert.equal(await current.evaluate(key => localStorage.getItem(key), key), newest);
+     const pending = stale.waitForEvent('download'); await stale.locator('#save-project').click();
+     const download = await pending;
+     const exported = JSON.parse(await fs.readFile(await download.path(), 'utf8'));
+     assert.equal(exported.settings.pressureBar, 41);
+     assert.equal(exported.view.mode, 'assembled');
+     const closed = stale.waitForEvent('close');
+     await stale.close({ runBeforeUnload: true }); await closed;
+     assert.equal(await current.evaluate(key => localStorage.getItem(key), key), newest);
+   } finally { await tabs.close(); }
+ });
  await record('No browser errors or failed requests',async()=>assert.deepEqual(errors,[]));
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({checkedAt:new Date().toISOString(),status:'PASSED',checks,errors},null,2));
 }catch(error){

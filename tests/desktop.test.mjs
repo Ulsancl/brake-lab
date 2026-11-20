@@ -237,6 +237,16 @@ try {
     assert.deepEqual(await project(), saved);
     assert.deepEqual((await fs.readdir(output)).filter(name => name.endsWith('.tmp')), []);
   });
+  await check('native open accepts Windows UTF-8 BOM without rewriting the original', async () => {
+    const bomPath = path.join(output, 'windows-bom.brake.json');
+    const raw = '\uFEFF' + JSON.stringify(saved);
+    await fs.writeFile(bomPath, raw, 'utf8');
+    await page.evaluate(() => window.brakeLab.setSettings({ speedKmh: 0 }));
+    await openDialog(bomPath); await page.locator('#open-project').click();
+    await toast('조건과 저장된 비교 결과를 복원했습니다');
+    assert.deepEqual(await project(), saved);
+    assert.equal(await fs.readFile(bomPath, 'utf8'), raw);
+  });
   await check('save and open cancellation preserve the project and destination', async () => {
     const canceledPath = path.join(output, 'canceled.json'), before = await project();
     await saveDialog(canceledPath, true); await page.locator('#save-project').click();
