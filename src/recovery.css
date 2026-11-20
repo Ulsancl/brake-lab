@@ -1,3 +1,8 @@
 #storage-recovery{border:1px solid #766648;border-radius:8px;background:#302a20;padding:10px;margin-bottom:12px}
 #storage-recovery p{font-size:11px;color:#dbc8a5;margin-bottom:8px}
 #storage-recovery button{width:100%;font-size:11px;white-space:normal;background:#433b2c;border-color:#8b7953;color:#f5e6c7}
+
+#autosave-recovery,#tab-draft-recovery{max-width:1100px;margin:12px auto;padding:12px 16px;border:1px solid #766648;border-radius:8px;background:#302a20;color:#f5e6c7}
+#autosave-recovery p,#tab-draft-recovery p{margin:6px 0 10px;color:#dbc8a5}
+#autosave-recovery button,#tab-draft-recovery button{white-space:normal;background:#433b2c;border-color:#8b7953;color:inherit}
+@media(max-width:1150px){#autosave-recovery,#tab-draft-recovery{margin:12px}}

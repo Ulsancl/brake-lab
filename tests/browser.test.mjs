@@ -3,8 +3,19 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { autosaveLockName } from '../src/browser-autosave.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+
+async function until(action, message) {
+  const deadline = performance.now() + 15_000;
+  do {
+    if (await action()) return;
+    await delay(25);
+  } while (performance.now() < deadline);
+  assert.fail(message);
+}
 
 const root=path.resolve(import.meta.dirname,'..');
 const output = artifactDirectory(root, path.join(root,'output','browser-consumer'));
@@ -155,6 +166,7 @@ try{
   await range('#focus-pressure',70);await page.locator('#focus-rate').selectOption('1');await page.locator('#focus-play').click();await page.clock.runFor(200);assert(Math.abs((await state()).snapshot.time-.2)<.02);await page.locator('#focus-play').click();assert.equal((await state()).running,false);assert.equal(await page.locator('#focus-play').textContent(),'이어서 제동');assert.deepEqual(await page.evaluate(()=>window.brakeLab.project().comparison),recordBefore);await page.screenshot({path:path.join(output,'focus-controls-mobile.png')});
   await page.keyboard.press('Escape');assert.equal((await state()).focused,false);assert.equal(await page.locator('#playback-rate').inputValue(),'1');assert.equal(await page.locator('[data-setting="pressureBar"]').inputValue(),'70');
  });
+ const fallbackReference=await page.evaluate(()=>window.brakeLab.project());
  await page.close();
  for(const fixture of [
   {name:'Corrupt automatic save preserves original bytes before replacement',raw:'{broken original',future:false},
@@ -166,6 +178,7 @@ try{
    const isolated=await browser.newContext({viewport:{width:1366,height:768}});try{
     await isolated.addInitScript(raw=>localStorage.setItem('brake-lab-project-v1',raw),fixture.raw);
     const fresh=await isolated.newPage();fresh.on('pageerror',e=>errors.push(e.message));await fresh.goto('http://127.0.0.1:5197/',{waitUntil:'networkidle'});await fresh.waitForFunction(()=>window.brakeLab?.getState().scene?.renderCount>0);
+    if(!fixture.future)await fresh.waitForFunction(()=>{try{return Boolean(JSON.parse(localStorage.getItem('brake-lab-project-v1')));}catch{return false;}});
     const saved=await fresh.evaluate(()=>Object.fromEntries(Object.keys(localStorage).map(key=>[key,localStorage.getItem(key)])));
     if(fixture.future){assert.equal(saved['brake-lab-project-v1'],fixture.raw);assert.equal(await fresh.evaluate(()=>window.brakeLab.getState().storageBlocked),true);await fresh.evaluate(()=>window.brakeLab.setSettings({pressureBar:40}));assert.equal(await fresh.evaluate(()=>localStorage.getItem('brake-lab-project-v1')),fixture.raw);}
     else{assert(Object.entries(saved).some(([key,value])=>key.startsWith('brake-lab-project-v1-original-')&&value===fixture.raw));assert.doesNotThrow(()=>JSON.parse(saved['brake-lab-project-v1']));assert.match(await fresh.locator('#storage-status').textContent(),/원문/);}
@@ -185,11 +198,14 @@ try{
    try {
      const stale = await openTab();
      await stale.evaluate(() => window.brakeLab.setSettings({ pressureBar: 41 }));
+     await stale.waitForFunction(key => JSON.parse(localStorage.getItem(key))?.settings.pressureBar === 41, key);
      const current = await openTab();
      await current.evaluate(() => window.brakeLab.setSettings({ pressureBar: 42 }));
+     await current.waitForFunction(key => JSON.parse(localStorage.getItem(key))?.settings.pressureBar === 42, key);
      const newest = await current.evaluate(key => localStorage.getItem(key), key);
      assert.equal(JSON.parse(newest).settings.pressureBar, 42);
      await stale.locator('[data-mode="assembled"]').click();
+     await stale.locator('#autosave-recovery').waitFor({ state: 'visible' });
      assert.match(await stale.locator('#storage-status').textContent(), /다른 창/);
      assert.equal(await current.evaluate(key => localStorage.getItem(key), key), newest);
      const pending = stale.waitForEvent('download'); await stale.locator('#save-project').click();
@@ -202,6 +218,181 @@ try{
      assert.equal(await current.evaluate(key => localStorage.getItem(key), key), newest);
    } finally { await tabs.close(); }
  });
+
+  const saveKey = 'brake-lab-project-v1';
+  const lockName = autosaveLockName(saveKey);
+  const stored = tab => tab.evaluate(key => localStorage.getItem(key), saveKey);
+  const experiment = tab => tab.evaluate(() => window.brakeLab.project());
+  const edit = (tab, value) => tab.locator('[data-setting="pressureBar"]').evaluate((input, value) => {
+    input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, String(value));
+  const exitsWithWarning = tab => tab.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
+  const open = async (tabs, init) => {
+    const tab = await tabs.newPage();
+    tab.on('pageerror', error => errors.push(error.message));
+    if (init) await tab.addInitScript(init[0], init[1]);
+    await tab.goto('http://127.0.0.1:5197/', { waitUntil: 'domcontentloaded' });
+    await tab.waitForFunction(() => !!window.brakeLab);
+    return tab;
+  };
+  const exportCurrent = async (tab, destination) => {
+    const pending = tab.waitForEvent('download');
+    await tab.locator('#export-unsaved-project').click();
+    const file = await pending;
+    assert.match(file.suggestedFilename(), /\.brake\.json$/);
+    const target = path.join(output, destination);
+    await file.saveAs(target);
+    return JSON.parse(await fs.readFile(target, 'utf8'));
+  };
+
+  await record('real concurrent tabs share a lock, retain newest experiment and export the conflicted one', async () => {
+    const tabs = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+    let holder;
+    try {
+      holder = await open(tabs);
+      await edit(holder, 41);
+      await until(async () => JSON.parse(await stored(holder))?.settings.pressureBar === 41, 'initial observation must be saved');
+      const original = await stored(holder);
+      const first = await open(tabs), second = await open(tabs);
+      for (const tab of [first, second]) assert.equal((await experiment(tab)).settings.pressureBar, 41);
+      await holder.evaluate(name => new Promise((ready, fail) => {
+        navigator.locks.request(name, () => new Promise(resolve => {
+          window.releaseAutosaveTestLock = resolve;
+          ready();
+        })).catch(fail);
+      }), lockName);
+      const pendingClients = count => until(async () => {
+        const observed = await holder.evaluate(async ({ name, key }) => {
+          const { pending, held } = await navigator.locks.query();
+          return {
+            raw: localStorage.getItem(key), held: held.some(lock => lock.name === name),
+            clients: new Set(pending.filter(lock => lock.name === name).map(lock => lock.clientId)).size,
+          };
+        }, { name: lockName, key: saveKey });
+        assert.equal(observed.raw, original, 'must not write while another tab holds the lock');
+        return observed.held && observed.clients === count;
+      }, `expected ${count} distinct queued Web Locks clients`);
+
+      await edit(first, 42);
+      await pendingClients(1);
+      await edit(first, 43);
+      await edit(second, 44);
+      await pendingClients(2);
+      assert.equal(await exitsWithWarning(second), true, 'queued work is not durable yet');
+      await holder.evaluate(() => window.releaseAutosaveTestLock());
+
+      await until(async () => JSON.parse(await stored(holder))?.settings.pressureBar === 43, 'the first waiting tab must save its latest edit');
+      await second.locator('#autosave-recovery').waitFor({ state: 'visible' });
+      assert.match(await second.locator('#autosave-title').textContent(), /다른 탭/);
+      assert.equal(await exitsWithWarning(second), true, 'conflicted edits are still unsaved');
+      const winner = await stored(holder);
+      await edit(second, 45);
+      const expected = await experiment(second);
+      const file = await exportCurrent(second, 'autosave-conflicted-tab.json');
+      assert.deepEqual(file, expected);
+      assert.equal(file.settings.pressureBar, 45);
+      assert.equal(await exitsWithWarning(second), false, 'the matching snapshot was offered for download');
+      assert.equal(await stored(second), winner);
+      // A later unsaved edit must re-arm the warning, without altering the shared primary.
+      await second.locator('[data-mode="assembled"]').click();
+      assert.equal(await exitsWithWarning(second), true);
+      await exportCurrent(second, 'autosave-edited-again.json');
+      assert.equal(await exitsWithWarning(second), false);
+      await second.reload({ waitUntil: 'domcontentloaded' });
+      await second.waitForFunction(() => !!window.brakeLab);
+      assert.equal((await experiment(second)).settings.pressureBar, 43);
+      assert.equal(await second.locator('#autosave-recovery').isHidden(), true);
+      assert.equal(await stored(second), winner);
+    } finally {
+      await holder?.evaluate(() => window.releaseAutosaveTestLock?.()).catch(() => {});
+      await tabs.close();
+    }
+  });
+
+  await record('rapid same-tab reload restores pending work and keeps stale drafts separate', async () => {
+    const tabs = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+    const reload = async tab => {
+      const accept = dialog => dialog.accept();
+      tab.on('dialog', accept);
+      try { await tab.reload({ waitUntil: 'domcontentloaded' }); }
+      finally { tab.off('dialog', accept); }
+      await tab.waitForFunction(() => !!window.brakeLab);
+    };
+    let holder;
+    try {
+      holder = await open(tabs);
+      await edit(holder, 41);
+      await until(async () => JSON.parse(await stored(holder))?.settings.pressureBar === 41, 'seed observation must be saved');
+      const original = await stored(holder);
+      const rapid = await open(tabs);
+      await holder.evaluate(name => new Promise((ready, fail) => {
+        navigator.locks.request(name, () => new Promise(resolve => {
+          window.releaseAutosaveTestLock = resolve;
+          ready();
+        })).catch(fail);
+      }), lockName);
+
+      // Navigate while the real lock prevents the shared save; do not wait
+      // for the debounce timer or synthesize a storage write in the test.
+      await edit(rapid, 42);
+      await reload(rapid);
+      assert.equal((await experiment(rapid)).settings.pressureBar, 42, 'current tab draft must survive reload');
+      assert.equal(await stored(rapid), original, 'reloaded draft must not bypass the held lock');
+
+      await holder.evaluate(() => window.releaseAutosaveTestLock());
+      await until(async () => JSON.parse(await stored(rapid))?.settings.pressureBar === 42, 'the resumed draft commits through the ordinary lock');
+      await until(() => rapid.evaluate(key => sessionStorage.getItem(`${key}:tab-draft`) === null, saveKey), 'committed journal must be cleared');
+
+      const other = await open(tabs);
+      await edit(other, 44);
+      await until(async () => JSON.parse(await stored(other))?.settings.pressureBar === 44, 'the other tab must save newer bytes');
+      const latest = await stored(other);
+      await edit(rapid, 45);
+      const older = await experiment(rapid);
+      await reload(rapid);
+      assert.equal((await experiment(rapid)).settings.pressureBar, 44, 'newer shared bytes take priority over a conflicting draft');
+      assert.equal(await stored(rapid), latest);
+      assert.equal(await rapid.locator('#tab-draft-recovery').isVisible(), true);
+      const downloaded = rapid.waitForEvent('download');
+      await rapid.locator('#export-interrupted-draft').click();
+      const file = await downloaded;
+      assert.deepEqual(JSON.parse(await fs.readFile(await file.path(), 'utf8')), older);
+      assert.equal(await rapid.locator('#tab-draft-recovery').isHidden(), true);
+      assert.equal(await stored(rapid), latest);
+    } finally {
+      await holder?.evaluate(() => window.releaseAutosaveTestLock?.()).catch(() => {});
+      await tabs.close();
+    }
+  });
+
+  await record('absent or denied Web Locks keep the autosave read-only but allow current file export', async () => {
+    const raw = JSON.stringify(fallbackReference);
+    const reference = JSON.parse(raw).settings.pressureBar;
+    for (const denied of [false, true]) {
+      const tabs = await browser.newContext({ acceptDownloads: true });
+      try {
+        const tab = await open(tabs, [({ key, raw, denied }) => {
+          Object.defineProperty(navigator, 'locks', { value: denied ? {
+            request: () => Promise.reject(new DOMException('test denial', 'SecurityError')),
+          } : undefined });
+          localStorage.setItem(key, raw);
+        }, { key: saveKey, raw, denied }]);
+        assert.equal((await experiment(tab)).settings.pressureBar, reference);
+        const next = reference === 42 ? 43 : 42;
+        await edit(tab, next);
+        await tab.locator('#autosave-recovery').waitFor({ state: 'visible' });
+        assert.match(await tab.locator('#autosave-title').textContent(), /안전한 자동 저장/);
+        await tab.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+        assert.equal(await exitsWithWarning(tab), true);
+        assert.equal(await stored(tab), raw);
+        const file = await exportCurrent(tab, `autosave-unavailable-${denied}.json`);
+        assert.equal(file.settings.pressureBar, next);
+        assert.equal(await exitsWithWarning(tab), false);
+        assert.equal(await stored(tab), raw);
+      } finally { await tabs.close(); }
+    }
+  });
+
  await record('No browser errors or failed requests',async()=>assert.deepEqual(errors,[]));
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({checkedAt:new Date().toISOString(),status:'PASSED',checks,errors},null,2));
 }catch(error){

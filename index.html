@@ -6,6 +6,8 @@
 </head>
 <body>
 <header class="app-header"><div class="brand"><span class="brand-symbol">◉</span><div><strong>BRAKE LAB</strong><small>디스크 브레이크 · ABS</small></div></div><div class="header-note">멈추는 힘을 해부해 보세요 <span>버전 1.1.0</span></div><button id="save-project">실험 저장</button><button id="open-project">불러오기</button><button id="help" aria-label="사용 안내">?</button><input id="project-file" type="file" accept=".json" hidden></header>
+<aside id="autosave-recovery" class="recovery" aria-labelledby="autosave-title" hidden><div><strong id="autosave-title"></strong><p id="autosave-hint"></p></div><button id="export-unsaved-project" type="button">이 탭의 실험 내려받기</button></aside>
+<aside id="tab-draft-recovery" class="recovery" aria-labelledby="tab-draft-title" hidden><div role="status"><strong id="tab-draft-title">이 탭에서 남긴 임시 실험이 있습니다.</strong><p>자동 저장을 덮어쓰지 않았습니다. 임시 실험이 필요하면 별도 파일로 내려받으세요.</p></div><button id="export-interrupted-draft" type="button">이전 임시 실험 내려받기</button></aside>
 <main>
 <aside class="panel control-panel">
  <div class="panel-heading"><span class="eyebrow">조건 바꾸기</span><h1>같은 속도, 다른 제동</h1><p>입력한 조건으로 다시 출발합니다.</p></div>

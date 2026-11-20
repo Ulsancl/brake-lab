@@ -3,6 +3,8 @@ import './scene.css';
 import './recovery.css';
 import './comparison.css';
 import './detail.css';
+import { supportsAutosaveLock, withAutosaveLock, writeIfUnchanged } from './browser-autosave.js';
+import { createAutosaveUI, getBrowserLocks, readBrowserDraft } from './autosave-ui.js';
 import {defaultSettings,normalizeSettings,createSimulation,compareAbs,MODEL_VERSION} from './model.js';
 import {createBrakeScene} from './scene.js';
 import {projectFormat,parseProject,makeProject} from './project.js';
@@ -13,12 +15,38 @@ import {renderBrakeDetails} from './detail-panel.js';
 
 const $=selector=>document.querySelector(selector),all=selector=>[...document.querySelectorAll(selector)];
 const storageKey='brake-lab-project-v1',format=projectFormat;
+const desktop=window.brakeDesktop?.isDesktop?window.brakeDesktop:null;
 const number=(v,d=1)=>Number.isFinite(v)?v.toLocaleString('ko-KR',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
 const toast=(message,context='notice')=>{const node=$('#toast');node.textContent=message;node.dataset.context=context;node.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.hidden=true,5000);};
 function dismissComparisonNotice(){if($('#toast').dataset.context==='comparison'){$('#toast').hidden=true;clearTimeout(toast.timer);}}
 let settings=normalizeSettings(defaultSettings),comparison=null,view={mode:'cutaway',cutaway:.65,explode:.5,labels:true,selectedPart:'rotor',quality:'auto',camera:'isometric'};
 let storageBlocked=false,storageMessage='',recoveryOriginal=null,running=false,last=0,accumulator=0,rate=.25,focused=false,loadSequence=0,externalClock=false;
-let lastPrimary=null;
+const browserLocks=desktop?null:getBrowserLocks();
+let lastPrimary=null,browserAutosave=null,originalPending=false,replaceCorruptPrimary=false,unreadableStorage=false;
+function archiveCorruptPrimary(raw){
+ const archive=()=>{
+  const prefix=storageKey+'-original-';
+  if(Object.keys(localStorage).some(key=>key.startsWith(prefix)&&localStorage.getItem(key)===raw))return;
+  let id=Date.now();
+  while(localStorage.getItem(prefix+id)!==null)id++;
+  localStorage.setItem(prefix+id,raw);
+ };
+ const succeed=()=>{storageMessage='읽을 수 없는 이전 저장의 원문을 보관했습니다.';};
+ const fail=()=>{
+  storageBlocked=true;
+  storageMessage='이전 저장을 보호합니다. 현재 실험은 파일로 저장해 주세요.';
+  browserAutosave?.report('failed');
+ };
+ if(desktop){
+  try{archive();succeed();}catch{fail();}
+ }else if(supportsAutosaveLock(browserLocks)){
+  // The primary is safe to replace only after its original is archived under the same lock.
+  replaceCorruptPrimary=true;originalPending=true;
+  void withAutosaveLock(browserLocks,storageKey,archive).then(()=>{
+   originalPending=false;succeed();persist();
+  },()=>{originalPending=false;fail();});
+ }else fail();
+}
 try{
  const raw=localStorage.getItem(storageKey);
  lastPrimary=raw;
@@ -28,26 +56,32 @@ try{
    recoveryOriginal=raw;
    const data=(()=>{try{return JSON.parse(raw);}catch{return null;}})();
    if(error.futureVersion||data?.format===format&&data.version>1){storageBlocked=true;storageMessage='새로운 저장 형식을 보호합니다. 현재 실험은 파일로 저장해 주세요.';}
-   else{
-    try{const backup=storageKey+'-original-'+Date.now();localStorage.setItem(backup,raw);if(localStorage.getItem(backup)!==raw)throw new Error();storageMessage='읽을 수 없는 이전 저장의 원문을 보관했습니다.';}
-    catch{storageBlocked=true;storageMessage='이전 저장을 보호합니다. 현재 실험은 파일로 저장해 주세요.';}
-   }
+   else archiveCorruptPrimary(raw);
   }
  }
  if(recoveryOriginal===null){const keys=Object.keys(localStorage).filter(key=>key.startsWith(storageKey+'-original-')).sort((a,b)=>Number(b.split('-').at(-1))-Number(a.split('-').at(-1)));if(keys.length)recoveryOriginal=localStorage.getItem(keys[0]);}
-}catch{storageBlocked=true;storageMessage='자동 저장을 사용할 수 없습니다. 실험 파일로 보관해 주세요.';}
+}catch{storageBlocked=true;unreadableStorage=true;storageMessage='자동 저장을 사용할 수 없습니다. 실험 파일로 보관해 주세요.';}
+const tabDraft = desktop ? null : readBrowserDraft({ key: storageKey, locks: browserLocks, expected: lastPrimary, allowResume: !storageBlocked&&!originalPending, decode: text=>parseProject(text,view) });
+if(tabDraft?.restored)({settings,comparison,view}=tabDraft.restored);
 let simulation=createSimulation(settings),snapshot=simulation.snapshot(),scene;
 const project=()=>makeProject(settings,view,comparison);
+const currentProjectText=()=>JSON.stringify(project());
 function persist(){
+ if(!desktop){
+  browserAutosave?.markDirty();
+  if(!storageBlocked&&!originalPending)browserAutosave?.flush();
+  return;
+ }
  if(storageBlocked){$('#storage-status').textContent=storageMessage;return;}
  try{
-  // A stale view or condition edit must not replace another tab's experiment.
-  if(localStorage.getItem(storageKey)!==lastPrimary){storageBlocked=true;storageMessage='다른 창에서 저장이 변경되었습니다. 이 창의 실험은 파일로 보관해 주세요.';$('#storage-status').textContent=storageMessage;return;}
-  const next=JSON.stringify(project());localStorage.setItem(storageKey,next);lastPrimary=next;
+  const next=currentProjectText();
+  if(!writeIfUnchanged(localStorage,storageKey,lastPrimary,next)){storageBlocked=true;storageMessage='다른 창에서 저장이 변경되었습니다. 이 창의 실험은 파일로 보관해 주세요.';$('#storage-status').textContent=storageMessage;return;}
+  lastPrimary=next;
   $('#storage-status').textContent=storageMessage||'이 기기에 자동 저장됨';
  }
  catch{storageBlocked=true;storageMessage='자동 저장 공간이 부족합니다. 실험 파일로 보관해 주세요.';$('#storage-status').textContent=storageMessage;toast(storageMessage);}
 }
+function flushBrowserOnHide(){browserAutosave?.onHide();}
 function syncInputs(){
  for(const el of all('[data-setting]')){const value=settings[el.dataset.setting];if(el.type==='checkbox')el.checked=value;else{if(el.type==='range'){el.dataset.baseMin??=el.min;el.dataset.baseMax??=el.max;el.dataset.baseStep??=el.step;el.min=Math.min(Number(el.dataset.baseMin),value);el.max=Math.max(Number(el.dataset.baseMax),value);const position=(value-Number(el.dataset.baseMin))/Number(el.dataset.baseStep);el.step=Math.abs(position-Math.round(position))<1e-7?el.dataset.baseStep:'any';}el.value=value;}}
  for(const el of all('[data-output]')){const key=el.dataset.output,value=settings[key];el.textContent=key==='speedKmh'?number(value,0)+' km/h':key==='pressureBar'?number(value,0)+' bar':key==='padFriction'?number(value,2):key==='padMeanRadius'?number(value*1000,0)+' mm':number(value,0)+' kg';}
@@ -78,7 +112,7 @@ function observePlayback(){
 function togglePlayback(){if(snapshot.stopped)reset();setRunning(!running);if(running)observePlayback();}
 function reset(){simulation.reset(settings);snapshot=simulation.snapshot();accumulator=0;setRunning(false);render();}
 function setSettings(patch){const previousCaliper=settings.caliper;settings=normalizeSettings({...settings,...patch});reset();syncInputs();if(settings.caliper!==previousCaliper)updateParts();if(comparison)showComparison();persist();return snapshot;}
-function selectPart(id){view.selectedPart=id;scene?.focus(id);const part=scene?.getComponents().find(p=>p.id===id);if(part){$('#part-name').textContent=part.name||part.label;$('#part-description').textContent=part.description;$('#part-facts').replaceChildren(...[part.material,part.rotates?'바퀴와 회전':'고정 지지·작동부'].filter(Boolean).map(text=>{const span=document.createElement('span');span.textContent=text;return span;}));}all('[data-part]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.part===id)));render();}
+function selectPart(id){view.selectedPart=id;scene?.focus(id);const part=scene?.getComponents().find(p=>p.id===id);if(part){$('#part-name').textContent=part.name||part.label;$('#part-description').textContent=part.description;$('#part-facts').replaceChildren(...[part.material,part.rotates?'바퀴와 회전':'고정 지지·작동부'].filter(Boolean).map(text=>{const span=document.createElement('span');span.textContent=text;return span;}));}all('[data-part]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.part===id)));render();browserAutosave?.markDirty();}
 function updateParts(){const parts=(scene?.getComponents()||[]).filter(part=>part.visible!==false);const nodes=parts.map(part=>{const b=document.createElement('button');b.dataset.part=part.id;b.textContent=part.name||part.label;b.onclick=()=>selectPart(part.id);return b;});$('#parts-list').replaceChildren(...nodes);$('#focus-part').replaceChildren(...parts.map(part=>{const option=document.createElement('option');option.value=part.id;option.textContent=part.name||part.label;return option;}));selectPart(parts.some(part=>part.id===view.selectedPart)?view.selectedPart:parts[0]?.id);}
 function render(){
  $('#speed').textContent=number(snapshot.speed*3.6);$('#distance').textContent=number(snapshot.distance,2);$('#slip').textContent=snapshot.slip===null?'—':number(snapshot.slip*100,0);$('#temperature').textContent=number(snapshot.discTemperatureC);
@@ -112,24 +146,45 @@ function showComparison(){
 function runComparison(){window.brakeDesktop?.setBusy(true);try{comparison=compareAbs(settings);showComparison();persist();$('#results').scrollIntoView({block:'start',behavior:'auto'});$('#comparison-summary').focus({preventScroll:true});toast('비교 결과를 보관했습니다. 조건을 바꾸어 다시 비교해 보세요.','comparison');return structuredClone(comparison);}catch(error){toast(error.message);throw error;}finally{window.brakeDesktop?.setBusy(false);}}
 function loadProject(text){const parsed=parseProject(text,view);settings=parsed.settings;comparison=parsed.comparison;view={...view,...parsed.view};reset();syncInputs();updateParts();showComparison();persist();return true;}
 function download(contents,name,type='application/json'){const url=URL.createObjectURL(new Blob([contents],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-async function saveProject(){try{const contents=JSON.stringify(project(),null,2);if(window.brakeDesktop?.isDesktop){const result=await window.brakeDesktop.saveProject({contents,name:'브레이크 실험.brake.json'});if(!result.canceled)toast('실험 파일을 저장했습니다.');}else download(contents,'브레이크 실험.brake.json');}catch(error){toast(error.message);}}
+async function saveProject(){
+ try{
+  const name='브레이크 실험.brake.json';
+  const snapshot=project(),contents=JSON.stringify(snapshot,null,2);
+  if(desktop){const result=await desktop.saveProject({contents,name});if(!result.canceled)toast('실험 파일을 저장했습니다.');}
+  else{download(contents,name);browserAutosave?.markExported(JSON.stringify(snapshot));}
+ }catch(error){toast(error.message);}
+}
 async function openProject(){try{if(window.brakeDesktop?.isDesktop){const result=await window.brakeDesktop.openProject();if(result.canceled)return;loadProject(result.content);toast('조건과 저장된 비교 결과를 복원했습니다.');}else $('#project-file').click();}catch(error){toast(error.message);}}
 function toggleFocus(value=!focused){focused=value;if(value)dismissComparisonNotice();document.body.classList.toggle('scene-focus',value);$('#focus').textContent=value?'돌아가기':'크게 보기';syncFocusPanel();requestAnimationFrame(()=>scene?.resize());}
 try{scene=createBrakeScene($('#scene'),{onSelect:selectPart});}catch(error){$('#scene').textContent='3D 화면을 시작하지 못했습니다. '+error.message;console.error(error);}
 all('[data-setting]').forEach(el=>el.addEventListener(el.tagName==='SELECT'||el.type==='checkbox'?'change':'input',()=>setSettings({[el.dataset.setting]:el.type==='checkbox'?el.checked:el.tagName==='SELECT'?el.value:Number(el.value)})));
 all('[data-caliper]').forEach(b=>b.onclick=()=>setSettings({caliper:b.dataset.caliper}));
 all('[data-mode]').forEach(b=>b.onclick=()=>{view.mode=b.dataset.mode;syncInputs();render();persist();});
-all('[data-camera]').forEach(b=>b.onclick=()=>{view.camera=b.dataset.camera;scene?.setCamera(view.camera);});
+all('[data-camera]').forEach(b=>b.onclick=()=>{view.camera=b.dataset.camera;scene?.setCamera(view.camera);browserAutosave?.markDirty();});
 $('#explode').oninput=e=>{view.explode=Number(e.target.value);render();persist();};$('#labels').onchange=e=>{view.labels=e.target.checked;render();persist();};$('#focus').onclick=()=>toggleFocus();$('#start').onclick=togglePlayback;$('#reset').onclick=reset;$('#playback-rate').onchange=e=>{rate=Number(e.target.value);last=performance.now();syncFocusPanel();};$('#compare-abs').onclick=runComparison;$('#clear-results').onclick=()=>{comparison=null;showComparison();persist();};$('#help').onclick=()=>$('#help-dialog').showModal();$('#close-help').onclick=()=>$('#help-dialog').close();$('#save-project').onclick=saveProject;$('#open-project').onclick=openProject;$('#project-file').onchange=async e=>{const sequence=++loadSequence;try{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024)throw new Error('실험 파일은 10 MiB 이하로 열어 주세요.');const text=await file.text();if(sequence!==loadSequence)return;loadProject(text);toast('조건과 저장된 비교 결과를 복원했습니다.');}catch(error){if(sequence===loadSequence)toast(error.message);}finally{if(sequence===loadSequence)e.target.value='';}};
 document.addEventListener('keydown',event=>{if(event.key==='Escape'){if(!event.repeat)toggleFocus(false);return;}if(event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,select,textarea,button,[contenteditable=true]')||$('#help-dialog').open)return;if(event.key.toLowerCase()==='f'){event.preventDefault();if(!event.repeat)toggleFocus();}if(event.code==='Space'){event.preventDefault();if(!event.repeat)$('#start').click();}});
 window.brakeDesktop?.onCommand(command=>{if(command==='save-project')void saveProject();else if(command==='open-project')void openProject();else if(command==='toggle-running')$('#start').click();else if(command==='focus')toggleFocus();else if(command==='help')$('#help-dialog').showModal();else if(command==='new-project'){comparison=null;setSettings(defaultSettings);showComparison();persist();}});
 $('#storage-recovery').hidden=recoveryOriginal===null;$('#recover-original').onclick=()=>{if(recoveryOriginal===null)return;download(recoveryOriginal,'이전 브레이크 저장 원문.txt','text/plain;charset=utf-8');toast('이전 저장 원문을 파일로 저장하기 시작했습니다.');};
-document.addEventListener('visibilitychange',()=>{last=performance.now();});window.addEventListener('resize',()=>{scene?.resize();drawTrace();});
+$('#export-unsaved-project').onclick=saveProject;
+document.addEventListener('visibilitychange',()=>{last=performance.now();if(document.hidden)flushBrowserOnHide();});window.addEventListener('resize',()=>{scene?.resize();drawTrace();});
 $('#focus-play').onclick=()=>$('#start').click();$('#focus-part').onchange=event=>selectPart(event.target.value);$('#focus-rate').onchange=event=>{rate=Number(event.target.value);$('#playback-rate').value=String(rate);last=performance.now();syncFocusPanel();};$('#focus-pressure').oninput=event=>setSettings({pressureBar:Number(event.target.value)});
-function restoreInspection(){scene?.restoreInspection();if(scene)view.camera=scene.getDiagnostics().camera;render();}
+function restoreInspection(){scene?.restoreInspection();if(scene)view.camera=scene.getDiagnostics().camera;render();browserAutosave?.markDirty();}
 function inspectSelectedPart(){const inspection=scene?.getDiagnostics().inspection;if(inspection?.active&&inspection.partId===view.selectedPart){restoreInspection();return;}scene?.inspectPart(view.selectedPart);render();}
 $('#inspect-part').onclick=inspectSelectedPart;$('#focus-inspect-part').onclick=inspectSelectedPart;$('#restore-inspection').onclick=restoreInspection;
-syncInputs();render();updateParts();showComparison();setRunning(false);render();persist();
+syncInputs();render();updateParts();showComparison();setRunning(false);render();
+if(desktop)persist();
+else{
+ browserAutosave=createAutosaveUI({
+  key:storageKey,locks:browserLocks,expected:lastPrimary,baseline:replaceCorruptPrimary||tabDraft.restored?undefined:currentProjectText(),
+  capture:currentProjectText,status:$('#storage-status'),saved:()=>storageMessage||'이 기기에 자동 저장됨',
+  maySave:()=>!storageBlocked&&!originalPending,interruptedDraft:tabDraft.interrupted,
+  downloadDraft:raw=>download(raw,'이전 브레이크 임시 실험.brake.json')
+ });
+ if(storageMessage)$('#storage-status').textContent=storageMessage;
+ if(unreadableStorage||!browserAutosave.canSave())browserAutosave.report('unavailable');
+ else if(tabDraft.restored)persist();
+ window.addEventListener('pagehide',flushBrowserOnHide);
+}
 function frame(now){const elapsed=last?Math.max(0,(now-last)/1000):0;last=now;if(running&&!document.hidden&&!externalClock){if(elapsed>1){setRunning(false);toast('화면이 오래 지연되어 일시정지했습니다. '+$('#start').textContent+'을 눌러 이어가세요.');}else advance(elapsed*rate);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
-window.brakeLab={getState:()=>({settings:structuredClone(settings),snapshot:structuredClone(snapshot),detail:brakeDetail(snapshot,settings),view:{...view},running,focused,scene:scene?.getDiagnostics(),hasComparison:!!comparison,storageBlocked}),setSettings,reset,advance,runComparison,project,loadProject,selectPart,toggleFocus,scene};
+window.brakeLab={getState:()=>({settings:structuredClone(settings),snapshot:structuredClone(snapshot),detail:brakeDetail(snapshot,settings),view:{...view},running,focused,scene:scene?.getDiagnostics(),hasComparison:!!comparison,storageBlocked:storageBlocked||Boolean(browserAutosave&&!browserAutosave.canSave())}),setSettings,reset,advance,runComparison,project,loadProject,selectPart,toggleFocus,scene};
 window.advanceTime=ms=>{if(!Number.isFinite(ms)||ms<0||ms>60000)throw new Error('진행 시간은 0–60000 밀리초여야 합니다.');externalClock=true;if(running)advance(ms/1000*rate);else render();};window.render_game_to_text=()=>JSON.stringify({model:MODEL_VERSION,coordinateSystem:'m, s, N, Pa; +Z wheel axle, +Y up; one-wheel straight braking',running,focused,settings,snapshot,detail:brakeDetail(snapshot,settings),view,inspection:scene?.getDiagnostics().inspection,hasComparison:!!comparison});
