@@ -5,6 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { readInput, writeArtifact, copyInput, publishDirectory, stagingDirectory } from '../scripts/safe-files.mjs';
 
+test('third-party notice versions agree with the dependency manifest', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const notice = fs.readFileSync(new URL('../docs/THIRD-PARTY-NOTICES.md', import.meta.url), 'utf8');
+  for (const [name, version] of Object.entries({ ...manifest.dependencies, ...manifest.devDependencies })) {
+    assert.ok(notice.includes('**' + version + '**'), 'Missing notice version for ' + name);
+  }
+});
+
 test('packaging reads reject file and directory symlinks before exposing outside bytes', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'safe-input-'));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-input-'));

@@ -7,6 +7,8 @@ const STOP_SPEED = 0.02;
 const SLIP_FLOOR = 0.5;
 const ABS_LOW_SPEED = 2;
 const SAMPLE_PERIOD = 0.01;
+const MAX_SUBSTEPS_PER_TICK = 2048;
+const MAX_COMPARISON_RK4_CALLS = 2_000_000;
 
 const freeze = (value) => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -99,7 +101,7 @@ function effectiveArea(s) {
     : 2 * s.fixedPistonDiameters.reduce((sum, diameter) => sum + Math.PI * diameter ** 2 / 4, 0);
 }
 
-function simulation(settings, tick) {
+function simulation(settings, tick, work) {
   let cfg, road, area, torquePerPascal, normalForce, initialEnergy, y;
   let time, carry, stopped, phase, lockTime, cutoffEnergy, projectionEnergy, peakTemperature, transitions;
   let nextControl;
@@ -148,6 +150,9 @@ function simulation(settings, tick) {
   }
 
   function rk4(state, h) {
+    if (work && --work.remaining < 0) {
+      throw new RangeError('이 조건의 계산량이 비교 한도를 넘었습니다. 조건을 조정해 다시 비교해 주세요.');
+    }
     const a = derivative(state);
     const b = derivative(state.map((x, i) => x + h * 0.5 * a[i]));
     const c = derivative(state.map((x, i) => x + h * 0.5 * b[i]));
@@ -192,9 +197,25 @@ function simulation(settings, tick) {
       if (phase !== old) transitions++;
       nextControl += CONTROL_PERIOD;
     }
+    // With no applied pressure the initially rolling wheel stays in free
+    // rolling equilibrium. Only passive disc cooling needs to be integrated.
+    if (cfg.pressureBar === 0) {
+      const thermalCapacity = cfg.discMass * cfg.discHeatCapacity;
+      const delta = (y[7] - cfg.ambientTemperatureC) * Math.expm1(-cfg.coolingWattsPerK * tick / thermalCapacity);
+      y[0] += y[1] * tick;
+      y[3] += y[2] * tick;
+      y[7] += delta;
+      y[8] -= delta * thermalCapacity;
+      peakTemperature = Math.max(peakTemperature, y[7]);
+      time += tick;
+      return;
+    }
     const stiffness = normalForce * road.B * road.C * road.D
       * (2 / cfg.mass + cfg.wheelRadius ** 2 / cfg.wheelInertia) / Math.max(y[1], SLIP_FLOOR);
     const n = 2 ** Math.max(0, Math.ceil(Math.log2(tick * Math.max(stiffness, 1) / 0.35)));
+    // All currently supported model settings fit this bound. Refuse to lower
+    // precision if a future setting would require more steps.
+    if (n > MAX_SUBSTEPS_PER_TICK) throw new RangeError('적분에 필요한 세부 단계 수가 한도를 넘었습니다.');
     for (let i = 0; i < n && !stopped; i++) substep(tick / n);
   }
 
@@ -237,7 +258,17 @@ function simulation(settings, tick) {
 
 export function createSimulation(settings = defaultSettings) { return simulation(settings, BASE_TICK); }
 
+function comparisonBudget(options) {
+  const limit = options.maxRk4Calls ?? MAX_COMPARISON_RK4_CALLS;
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('계산량 한도는 양의 정수여야 합니다.');
+  return { remaining: Math.min(MAX_COMPARISON_RK4_CALLS, limit) };
+}
+
 export function runExperiment(settings = defaultSettings, options = {}) {
+  return integrateExperiment(settings, options, comparisonBudget(options));
+}
+
+function integrateExperiment(settings, options, work) {
   const requestedDt = options.dt ?? BASE_TICK;
   const duration = options.duration ?? 60;
   if (typeof requestedDt !== 'number' || !Number.isFinite(requestedDt) || requestedDt <= 0
@@ -246,7 +277,7 @@ export function runExperiment(settings = defaultSettings, options = {}) {
   }
   // Refinement is a power-of-two subdivision of 1 ms, preserving exact 5 ms control ticks.
   const tick = BASE_TICK / 2 ** clamp(Math.ceil(Math.log2(BASE_TICK / requestedDt)), 0, 3);
-  const sim = simulation(settings, tick);
+  const sim = simulation(settings, tick, work);
   const captured = [sim.snapshot()];
   let state = captured[0], nextSample = SAMPLE_PERIOD;
   const count = Math.floor((duration + 1e-12) / tick);
@@ -272,8 +303,9 @@ export function runExperiment(settings = defaultSettings, options = {}) {
 
 export function compareAbs(settings = defaultSettings, options = {}) {
   const cfg = normalizeSettings(settings);
-  const withoutAbs = runExperiment({ ...cfg, abs: false }, options);
-  const withAbs = runExperiment({ ...cfg, abs: true }, options);
+  const work = comparisonBudget(options);
+  const withoutAbs = integrateExperiment({ ...cfg, abs: false }, options, work);
+  const withAbs = integrateExperiment({ ...cfg, abs: true }, options, work);
   return freeze({ modelVersion: MODEL_VERSION, settings: cfg, withoutAbs, withAbs, difference: {
     stopDistance: withoutAbs.summary.stopped && withAbs.summary.stopped
       ? withAbs.summary.stopDistance - withoutAbs.summary.stopDistance : null,

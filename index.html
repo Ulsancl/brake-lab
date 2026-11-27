@@ -7,7 +7,7 @@
 <body>
 <header class="app-header">
  <div class="brand"><span class="brand-symbol" aria-hidden="true">◉</span><div><strong>BRAKE LAB</strong><small>디스크 브레이크 · ABS</small></div></div>
- <div class="header-note">멈추는 힘을 해부해 보세요 <span>버전 1.1.0</span></div>
+ <div class="header-note">멈추는 힘을 해부해 보세요 <span>버전 __BRAKE_LAB_VERSION__</span></div>
  <div class="file-actions" role="group" aria-label="실험 파일 및 안내">
   <button id="new-project" type="button">새 실험</button>
   <button id="open-project" type="button" aria-label="실험 열기"><span>실험 열기</span><span class="compact-label" aria-hidden="true">열기</span></button>
@@ -55,7 +55,7 @@
  <div class="model-note">직선 제동 · 1휠 등가 모형<br>실제 차량의 성능·정비·안전을 판정하지 않습니다.</div>
 </aside>
 <section class="workbench">
- <section class="first-experiment"><div><span class="eyebrow">처음 하는 실험</span><h2>ABS를 켜면 무엇이 달라질까요?</h2><p>현재 조건 그대로 켬·끔을 계산해 거리와 잠김을 비교합니다.</p></div><button id="compare-abs" class="primary">같은 조건으로 비교</button></section>
+ <section class="first-experiment"><div><span class="eyebrow">처음 하는 실험</span><h2>ABS를 켜면 무엇이 달라질까요?</h2><p>현재 조건 그대로 켬·끔을 계산해 거리와 잠김을 비교합니다.</p></div><button id="compare-abs" class="primary">같은 조건으로 비교</button><button id="cancel-comparison" type="button" hidden>비교 취소</button></section>
  <div class="scene-toolbar"><div class="segmented"><button data-mode="assembled">조립</button><button data-mode="cutaway" aria-pressed="true">절개</button><button data-mode="exploded">분해</button></div><label>분해 간격 <input id="explode" type="range" min="0" max="1" step="0.01" value="0.5" disabled title="분해 보기에서 부품 사이 간격을 조절합니다."></label><label class="compact-check"><input id="labels" type="checkbox" checked>이름표</label><button id="focus" title="크게 보기 · F">크게 보기</button></div>
  <section class="focus-panel" aria-label="확대 화면 조작"><div class="focus-part"><label>부품 살펴보기 <select id="focus-part" aria-label="확대 화면에서 선택할 부품"></select></label><p id="focus-part-description"></p><small id="focus-part-facts"></small><button id="focus-inspect-part" class="inspect-button" aria-pressed="false">선택 부품 자세히 보기</button><details id="focus-component-details" class="focus-component-details"><summary>이 부품의 현재 계산값</summary><dl id="focus-detail-facts" class="detail-facts"></dl><p id="focus-detail-note" class="detail-note"></p></details></div><div class="focus-motion"><div class="focus-playback"><button id="focus-play" class="primary">제동 시작</button><label>재생 속도 <select id="focus-rate"><option value="0.25">1/4</option><option value="0.5">1/2</option><option value="1">실시간</option></select></label><span id="focus-status">준비</span></div><label class="focus-pressure">브레이크 압력 <output id="focus-pressure-value">60 bar</output><input id="focus-pressure" type="range" min="0" max="100" step="1" value="60" aria-describedby="focus-pressure-note"></label><p id="focus-pressure-note" class="focus-pressure-note">압력을 바꾸면 처음부터 다시 출발합니다.</p><div class="focus-readouts"><span>속도 <b id="focus-speed">100.0</b> km/h</span><span>슬립 <b id="focus-slip">0</b></span><span>경과 <b id="focus-time">0.00</b> s</span></div></div></section>
  <div id="scene" role="region" tabindex="-1" aria-label="브레이크 구조 3D 관찰"></div>
