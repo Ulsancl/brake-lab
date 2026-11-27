@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { windowsWriteProject } = require('./windows-save.cjs');
 
 async function readBoundedFile(file, limit, message, { open = fsp.open, local = false } = {}) {
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0) | (local ? fs.constants.O_NOFOLLOW || 0 : 0);
@@ -31,7 +32,8 @@ async function readBoundedFile(file, limit, message, { open = fsp.open, local = 
   } finally { await handle.close(); }
 }
 
-async function replaceProjectFile(target, contents, createId = randomUUID) {
+async function replaceProjectFile(target, contents, { platform = process.platform, createId = randomUUID } = {}) {
+  if (platform === 'win32') return windowsWriteProject(target, contents);
   const temporary = path.join(path.dirname(target), `.brake-save-${createId()}.tmp`);
   // A failed exclusive open confers no ownership of the path.
   const handle = await fsp.open(temporary, 'wx', 0o600);
