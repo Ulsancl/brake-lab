@@ -5,7 +5,17 @@
   <meta name="theme-color" content="#111b23"><title>Brake Lab · 브레이크와 ABS</title>
 </head>
 <body>
-<header class="app-header"><div class="brand"><span class="brand-symbol">◉</span><div><strong>BRAKE LAB</strong><small>디스크 브레이크 · ABS</small></div></div><div class="header-note">멈추는 힘을 해부해 보세요 <span>버전 1.1.0</span></div><button id="save-project">실험 저장</button><button id="open-project">불러오기</button><button id="help" aria-label="사용 안내">?</button><input id="project-file" type="file" accept=".json" hidden></header>
+<header class="app-header">
+ <div class="brand"><span class="brand-symbol" aria-hidden="true">◉</span><div><strong>BRAKE LAB</strong><small>디스크 브레이크 · ABS</small></div></div>
+ <div class="header-note">멈추는 힘을 해부해 보세요 <span>버전 1.1.0</span></div>
+ <div class="file-actions" role="group" aria-label="실험 파일 및 안내">
+  <button id="new-project" type="button">새 실험</button>
+  <button id="open-project" type="button" aria-label="실험 열기"><span>실험 열기</span><span class="compact-label" aria-hidden="true">열기</span></button>
+  <button id="save-project" type="button" aria-label="실험 저장"><span>실험 저장</span><span class="compact-label" aria-hidden="true">저장</span></button>
+  <button id="help" type="button" aria-label="사용 안내">?</button>
+ </div>
+ <input id="project-file" type="file" accept=".json" hidden>
+</header>
 <aside id="autosave-recovery" class="recovery" aria-labelledby="autosave-title" hidden><div><strong id="autosave-title"></strong><p id="autosave-hint"></p></div><button id="export-unsaved-project" type="button">이 탭의 실험 내려받기</button></aside>
 <aside id="tab-draft-recovery" class="recovery" aria-labelledby="tab-draft-title" hidden><div role="status"><strong id="tab-draft-title">이 탭에서 남긴 임시 실험이 있습니다.</strong><p>자동 저장을 덮어쓰지 않았습니다. 임시 실험이 필요하면 별도 파일로 내려받으세요.</p></div><button id="export-interrupted-draft" type="button">이전 임시 실험 내려받기</button></aside>
 <main>
@@ -49,11 +59,26 @@
  <div class="scene-toolbar"><div class="segmented"><button data-mode="assembled">조립</button><button data-mode="cutaway" aria-pressed="true">절개</button><button data-mode="exploded">분해</button></div><label>분해 간격 <input id="explode" type="range" min="0" max="1" step="0.01" value="0.5" disabled title="분해 보기에서 부품 사이 간격을 조절합니다."></label><label class="compact-check"><input id="labels" type="checkbox" checked>이름표</label><button id="focus" title="크게 보기 · F">크게 보기</button></div>
  <section class="focus-panel" aria-label="확대 화면 조작"><div class="focus-part"><label>부품 살펴보기 <select id="focus-part" aria-label="확대 화면에서 선택할 부품"></select></label><p id="focus-part-description"></p><small id="focus-part-facts"></small><button id="focus-inspect-part" class="inspect-button" aria-pressed="false">선택 부품 자세히 보기</button><details id="focus-component-details" class="focus-component-details"><summary>이 부품의 현재 계산값</summary><dl id="focus-detail-facts" class="detail-facts"></dl><p id="focus-detail-note" class="detail-note"></p></details></div><div class="focus-motion"><div class="focus-playback"><button id="focus-play" class="primary">제동 시작</button><label>재생 속도 <select id="focus-rate"><option value="0.25">1/4</option><option value="0.5">1/2</option><option value="1">실시간</option></select></label><span id="focus-status">준비</span></div><label class="focus-pressure">브레이크 압력 <output id="focus-pressure-value">60 bar</output><input id="focus-pressure" type="range" min="0" max="100" step="1" value="60" aria-describedby="focus-pressure-note"></label><p id="focus-pressure-note" class="focus-pressure-note">압력을 바꾸면 처음부터 다시 출발합니다.</p><div class="focus-readouts"><span>속도 <b id="focus-speed">100.0</b> km/h</span><span>슬립 <b id="focus-slip">0</b></span><span>경과 <b id="focus-time">0.00</b> s</span></div></div></section>
  <div id="scene" role="region" tabindex="-1" aria-label="브레이크 구조 3D 관찰"></div>
- <div class="camera-tools"><button id="restore-inspection" hidden>전체 구조</button><button data-camera="isometric">입체</button><button data-camera="front">정면</button><button data-camera="side">측면</button><span>드래그 회전 · 휠 확대</span></div>
+ <div class="camera-tools"><button id="restore-inspection" hidden>전체 구조</button><button data-camera="isometric">입체</button><button data-camera="front">정면</button><button data-camera="side">측면</button><span class="pointer-gestures">드래그 회전 · 휠 확대</span><span class="touch-gestures">드래그 회전 · 두 손가락 확대</span></div>
+ <label class="scene-part-picker">부품 선택 <select id="scene-part" aria-label="3D 화면에서 살펴볼 부품"></select><small>모형에서 직접 탭해도 선택됩니다.</small></label>
  <section class="telemetry" aria-label="현재 제동 상태">
   <div><span>차량 속도</span><b id="speed">100.0</b><small>km/h</small></div><div><span>제동 거리</span><b id="distance">0.00</b><small>m</small></div><div><span>휠 슬립</span><b id="slip">0</b><small>%</small></div><div><span>디스크 평균 온도</span><b id="temperature">20.0</b><small>°C</small></div>
  </section>
- <section class="hydraulics"><div class="hydraulic-header"><strong>유압이 바퀴 잠김을 조절합니다</strong><span id="abs-phase">압력 증가</span></div><div class="hydraulic-path"><span>운전자</span><i>→</i><span id="inlet">입구 밸브</span><i>→</i><span id="caliper-pressure">캘리퍼 0 bar</span><i>→</i><span id="outlet">출구 밸브</span><i>→</i><span id="pump">환류 펌프</span></div><p id="force-readout">압력 · 브레이크 토크 · 노면 제동력</p></section>
+ <section class="hydraulics">
+  <div class="hydraulic-header"><strong>유압이 바퀴 잠김을 조절합니다</strong><span id="abs-phase">압력 증가</span></div>
+  <div class="hydraulic-path">
+   <span id="hydraulic-driver">운전자</span>
+   <div><i data-flow="supply" aria-hidden="true">→</i><span id="inlet">입구 밸브</span></div>
+   <div><i data-flow="supply" aria-hidden="true">→</i><span id="caliper-pressure">캘리퍼 0 bar</span></div>
+   <div><i data-flow="return" aria-hidden="true">→</i><span id="outlet">출구 밸브</span></div>
+   <div><i data-flow="return" aria-hidden="true">→</i><span id="pump">환류 펌프</span></div>
+  </div>
+  <div id="force-readout" class="force-readout">
+   <div><span>브레이크 토크</span><strong id="brake-torque">0 N·m</strong></div>
+   <div><span>노면 제동력</span><strong id="tire-force">0 N</strong></div>
+   <div><span>경과</span><strong id="force-time">0.00 s</strong></div>
+  </div>
+ </section>
  <section class="energy-observation" aria-label="현재 제동 에너지 배분"><div class="energy-heading"><strong>운동 에너지는 어디로 갔을까요?</strong><span id="energy-total"></span></div><div class="energy-bar" aria-hidden="true"><span data-energy-segment="kinetic"></span><span data-energy-segment="brake"></span><span data-energy-segment="tire"></span><span data-energy-segment="cutoff"></span></div><div class="energy-legend"><span><i class="kinetic"></i>남은 운동 에너지<b data-energy-value="kinetic"></b></span><span><i class="brake"></i>브레이크 마찰열<b data-energy-value="brake"></b></span><span><i class="tire"></i>타이어·노면 손실<b data-energy-value="tire"></b></span><span><i class="cutoff"></i>정지·수치 보정<b data-energy-value="cutoff"></b></span></div><p class="energy-caption"><span>출발 이후 누적값 · 마찰열 중 일부만 디스크에 전달됩니다.</span><span id="energy-residual"></span></p></section>
  <section class="results" id="results" hidden><div class="results-heading"><h2>ABS 켬 · 끔 비교</h2><button id="clear-results">비교 지우기</button></div><div id="comparison-summary" class="comparison-summary" tabindex="-1" aria-live="polite"><p id="comparison-headline"></p><p id="comparison-detail"></p><p id="comparison-energy"></p></div><p id="comparison-note"></p><table><thead><tr><th>조건</th><th>거리</th><th>시간</th><th>잠김</th><th>평균 온도 최고</th></tr></thead><tbody id="result-rows"></tbody></table><p class="hint">잠김은 2 m/s 초과 구간에서 확인합니다. 조향·노면 변형·하중 이동은 포함하지 않습니다.</p><canvas id="trace" width="900" height="190" aria-label="두 제동 결과의 시간별 속도 그래프"></canvas></section>
 </section>

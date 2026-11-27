@@ -14,6 +14,8 @@ import {brakeDetail} from './detail-readouts.js';
 import {renderBrakeDetails} from './detail-panel.js';
 
 const $=selector=>document.querySelector(selector),all=selector=>[...document.querySelectorAll(selector)];
+const partPickers=all('#scene-part, #focus-part');
+const supplyArrows=all('[data-flow="supply"]'),returnArrows=all('[data-flow="return"]');
 const storageKey='brake-lab-project-v1',format=projectFormat;
 const desktop=window.brakeDesktop?.isDesktop?window.brakeDesktop:null;
 const number=(v,d=1)=>Number.isFinite(v)?v.toLocaleString('ko-KR',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
@@ -131,13 +133,42 @@ function observePlayback(){
 function togglePlayback(){if(snapshot.stopped)reset();setRunning(!running);if(running)observePlayback();}
 function reset(){simulation.reset(settings);snapshot=simulation.snapshot();accumulator=0;setRunning(false);render();}
 function setSettings(patch){const previousCaliper=settings.caliper;settings=normalizeSettings({...settings,...patch});reset();syncInputs();if(settings.caliper!==previousCaliper)updateParts();if(comparison)showComparison();persist();return snapshot;}
-function selectPart(id){view.selectedPart=id;scene?.focus(id);const part=scene?.getComponents().find(p=>p.id===id);if(part){$('#part-name').textContent=part.name||part.label;$('#part-description').textContent=part.description;$('#part-facts').replaceChildren(...[part.material,part.rotates?'바퀴와 회전':'고정 지지·작동부'].filter(Boolean).map(text=>{const span=document.createElement('span');span.textContent=text;return span;}));}all('[data-part]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.part===id)));render();browserAutosave?.markDirty();}
-function updateParts(){const parts=(scene?.getComponents()||[]).filter(part=>part.visible!==false);const nodes=parts.map(part=>{const b=document.createElement('button');b.dataset.part=part.id;b.textContent=part.name||part.label;b.onclick=()=>selectPart(part.id);return b;});$('#parts-list').replaceChildren(...nodes);$('#focus-part').replaceChildren(...parts.map(part=>{const option=document.createElement('option');option.value=part.id;option.textContent=part.name||part.label;return option;}));selectPart(parts.some(part=>part.id===view.selectedPart)?view.selectedPart:parts[0]?.id);}
+function selectPart(id){view.selectedPart=id;scene?.focus(id);const part=scene?.getComponents().find(p=>p.id===id);if(part){$('#part-name').textContent=part.name||part.label;$('#part-description').textContent=part.description;$('#part-facts').replaceChildren(...[part.material,part.rotates?'바퀴와 회전':'고정 지지·작동부'].filter(Boolean).map(text=>{const span=document.createElement('span');span.textContent=text;return span;}));}all('[data-part]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.part===id)));for(const picker of partPickers)picker.value=id??'';render();browserAutosave?.markDirty();}
+function updateParts(){
+ const parts=(scene?.getComponents()||[]).filter(part=>part.visible!==false);
+ const nodes=parts.map(part=>{const button=document.createElement('button');button.dataset.part=part.id;button.textContent=part.name||part.label;button.onclick=()=>selectPart(part.id);return button;});
+ $('#parts-list').replaceChildren(...nodes);
+ for(const picker of partPickers){
+  picker.replaceChildren(...parts.map(part=>new Option(part.name||part.label,part.id)));
+  picker.disabled=parts.length===0;
+ }
+ selectPart(parts.some(part=>part.id===view.selectedPart)?view.selectedPart:parts[0]?.id);
+}
+function renderHydraulics(){
+ const {pressure,inletOpen,outletOpen,pumpActive,brakeTorque,tireForce,time}=snapshot;
+ const pressurized=pressure>0;
+ const supplying=pressurized&&inletOpen;
+ const returning=pressurized&&outletOpen;
+ $('#hydraulic-driver').classList.toggle('active',supplying);
+ $('#inlet').textContent='입구 '+(inletOpen?'열림':'닫힘');
+ $('#inlet').classList.toggle('active',inletOpen);
+ $('#outlet').textContent='출구 '+(outletOpen?'열림':'닫힘');
+ $('#outlet').classList.toggle('active',outletOpen);
+ $('#pump').textContent=pumpActive?'환류 펌프 작동':'환류 펌프 대기';
+ $('#pump').classList.toggle('active',pumpActive);
+ $('#caliper-pressure').textContent='캘리퍼 '+number(pressure/1e5)+' bar';
+ $('#caliper-pressure').classList.toggle('active',pressurized);
+ for(const arrow of supplyArrows)arrow.classList.toggle('active',supplying);
+ for(const arrow of returnArrows)arrow.classList.toggle('active',returning);
+ $('#brake-torque').textContent=number(brakeTorque,0)+' N·m';
+ $('#tire-force').textContent=number(tireForce,0)+' N';
+ $('#force-time').textContent=number(time,2)+' s';
+ $('#force-readout').classList.toggle('active',brakeTorque>0||tireForce>0);
+}
 function render(){
  $('#speed').textContent=number(snapshot.speed*3.6);$('#distance').textContent=number(snapshot.distance,2);$('#slip').textContent=snapshot.slip===null?'—':number(snapshot.slip*100,0);$('#temperature').textContent=number(snapshot.discTemperatureC);
  const phases={increase:'압력 증가',hold:'압력 유지',decrease:'압력 감소',off:'ABS 끔',stopped:'정지 완료','low-speed':'저속 · 운전자 압력'};$('#abs-phase').textContent=phases[snapshot.absPhase]||snapshot.absPhase;
- $('#inlet').textContent='입구 '+(snapshot.inletOpen?'열림':'닫힘');$('#inlet').classList.toggle('active',!!snapshot.inletOpen);$('#outlet').textContent='출구 '+(snapshot.outletOpen?'열림':'닫힘');$('#outlet').classList.toggle('active',!!snapshot.outletOpen);$('#pump').classList.toggle('active',!!snapshot.pumpActive);$('#pump').textContent=snapshot.pumpActive?'환류 펌프 작동':'환류 펌프 대기';$('#caliper-pressure').textContent='캘리퍼 '+number(snapshot.pressure/1e5)+' bar';
- $('#force-readout').textContent='브레이크 토크 '+number(snapshot.brakeTorque,0)+' N·m · 노면 제동력 '+number(snapshot.tireForce,0)+' N · 경과 '+number(snapshot.time,2)+' s';
+ renderHydraulics();
  scene?.setState(snapshot,settings,view);
  if(scene)view.camera=scene.getDiagnostics().camera;
  renderBrakeDetails(view.selectedPart,snapshot,settings,scene?.getDiagnostics().inspection);
@@ -152,7 +183,7 @@ function advance(seconds){
 function drawTrace(){
  const canvas=$('#trace'),ctx=canvas.getContext('2d'),dpr=devicePixelRatio||1,w=Math.max(320,canvas.clientWidth),h=170;canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);if(!comparison)return;
  const runs=[comparison.withoutAbs,comparison.withAbs],maxTime=Math.max(.001,...runs.map(r=>r.samples.at(-1).time)),maxSpeed=Math.max(1,...runs.map(r=>r.samples[0].speed*3.6));
- ctx.font='11px Segoe UI';ctx.strokeStyle='#37505d';ctx.fillStyle='#8faab8';for(let i=0;i<4;i++){const y=22+(h-48)*i/3;ctx.beginPath();ctx.moveTo(44,y);ctx.lineTo(w-14,y);ctx.stroke();ctx.fillText(number(maxSpeed*(1-i/3),0),5,y+4);}ctx.fillText('km/h',5,12);ctx.fillText(number(maxTime)+' s',w-65,h-5);ctx.fillText('0',44,h-5);
+ ctx.font=`11px ${getComputedStyle(canvas).fontFamily}`;ctx.strokeStyle='#37505d';ctx.fillStyle='#8faab8';for(let i=0;i<4;i++){const y=22+(h-48)*i/3;ctx.beginPath();ctx.moveTo(44,y);ctx.lineTo(w-14,y);ctx.stroke();ctx.fillText(number(maxSpeed*(1-i/3),0),5,y+4);}ctx.fillText('km/h',5,12);ctx.fillText(number(maxTime)+' s',w-65,h-5);ctx.fillText('0',44,h-5);
  runs.forEach((run,i)=>{ctx.strokeStyle=['#ffb688','#68dbc5'][i];ctx.lineWidth=2;ctx.beginPath();run.samples.forEach((s,j)=>{const x=44+s.time/maxTime*(w-58),y=22+(1-s.speed*3.6/maxSpeed)*(h-48);if(j===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.stroke();ctx.fillStyle=ctx.strokeStyle;ctx.fillText(i?'ABS 켬':'ABS 끔',w-155,14+i*16);});
 }
 function showComparison(){
@@ -182,6 +213,13 @@ function showComparison(){
 }
 function runComparison(){window.brakeDesktop?.setBusy(true);try{comparison=compareAbs(settings);showComparison();persist();$('#results').scrollIntoView({block:'start',behavior:'auto'});$('#comparison-summary').focus({preventScroll:true});toast('비교 결과를 보관했습니다. 조건을 바꾸어 다시 비교해 보세요.','comparison');return structuredClone(comparison);}catch(error){toast(error.message);throw error;}finally{window.brakeDesktop?.setBusy(false);}}
 function loadProject(text){const parsed=parseProject(text,view);settings=parsed.settings;comparison=parsed.comparison;view={...view,...parsed.view};reset();syncInputs();updateParts();showComparison();persist();return true;}
+function newProject(){
+ loadSequence++;
+ $('#project-file').value='';
+ comparison=null;
+ setSettings(defaultSettings);
+ showComparison();
+}
 function download(contents,name,type='application/json'){const url=URL.createObjectURL(new Blob([contents],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function saveProject(){
  try{
@@ -200,11 +238,13 @@ all('[data-mode]').forEach(b=>b.onclick=()=>{view.mode=b.dataset.mode;syncInputs
 all('[data-camera]').forEach(b=>b.onclick=()=>{view.camera=b.dataset.camera;scene?.setCamera(view.camera);browserAutosave?.markDirty();});
 $('#explode').oninput=e=>{view.explode=Number(e.target.value);render();persist();};$('#labels').onchange=e=>{view.labels=e.target.checked;render();persist();};$('#focus').onclick=()=>toggleFocus();$('#start').onclick=togglePlayback;$('#reset').onclick=reset;$('#playback-rate').onchange=e=>{rate=Number(e.target.value);last=performance.now();syncFocusPanel();};$('#compare-abs').onclick=runComparison;$('#clear-results').onclick=()=>{comparison=null;showComparison();persist();};$('#help').onclick=()=>$('#help-dialog').showModal();$('#close-help').onclick=()=>$('#help-dialog').close();$('#save-project').onclick=saveProject;$('#open-project').onclick=openProject;$('#project-file').onchange=async e=>{const sequence=++loadSequence;try{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024)throw new Error('실험 파일은 10 MiB 이하로 열어 주세요.');const text=await file.text();if(sequence!==loadSequence)return;loadProject(text);toast('조건과 저장된 비교 결과를 복원했습니다.');}catch(error){if(sequence===loadSequence)toast(error.message);}finally{if(sequence===loadSequence)e.target.value='';}};
 document.addEventListener('keydown',event=>{if(event.key==='Escape'){if(!event.repeat)toggleFocus(false);return;}if(event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,select,textarea,button,[contenteditable=true]')||$('#help-dialog').open)return;if(event.key.toLowerCase()==='f'){event.preventDefault();if(!event.repeat)toggleFocus();}if(event.code==='Space'){event.preventDefault();if(!event.repeat)$('#start').click();}});
-window.brakeDesktop?.onCommand(command=>{if(command==='save-project')void saveProject();else if(command==='open-project')void openProject();else if(command==='toggle-running')$('#start').click();else if(command==='focus')toggleFocus();else if(command==='help')$('#help-dialog').showModal();else if(command==='new-project'){comparison=null;setSettings(defaultSettings);showComparison();persist();}});
+$('#new-project').onclick=newProject;
+window.brakeDesktop?.onCommand(command=>{if(command==='save-project')void saveProject();else if(command==='open-project')void openProject();else if(command==='toggle-running')$('#start').click();else if(command==='focus')toggleFocus();else if(command==='help')$('#help-dialog').showModal();else if(command==='new-project')newProject();});
 $('#storage-recovery').hidden=recoveryOriginal===null;$('#recover-original').onclick=()=>{if(recoveryOriginal===null)return;download(recoveryOriginal,'이전 브레이크 저장 원문.txt','text/plain;charset=utf-8');toast('이전 저장 원문을 파일로 저장하기 시작했습니다.');};
 $('#export-unsaved-project').onclick=saveProject;
 document.addEventListener('visibilitychange',()=>{last=performance.now();if(document.hidden)flushBrowserOnHide();});window.addEventListener('resize',()=>{scene?.resize();drawTrace();});
-$('#focus-play').onclick=()=>$('#start').click();$('#focus-part').onchange=event=>selectPart(event.target.value);$('#focus-rate').onchange=event=>{rate=Number(event.target.value);$('#playback-rate').value=String(rate);last=performance.now();syncFocusPanel();};$('#focus-pressure').oninput=event=>setSettings({pressureBar:Number(event.target.value)});
+for(const picker of partPickers)picker.onchange=event=>selectPart(event.target.value);
+$('#focus-play').onclick=()=>$('#start').click();$('#focus-rate').onchange=event=>{rate=Number(event.target.value);$('#playback-rate').value=String(rate);last=performance.now();syncFocusPanel();};$('#focus-pressure').oninput=event=>setSettings({pressureBar:Number(event.target.value)});
 function restoreInspection(){scene?.restoreInspection();if(scene)view.camera=scene.getDiagnostics().camera;render();browserAutosave?.markDirty();}
 function inspectSelectedPart(){const inspection=scene?.getDiagnostics().inspection;if(inspection?.active&&inspection.partId===view.selectedPart){restoreInspection();return;}scene?.inspectPart(view.selectedPart);render();}
 $('#inspect-part').onclick=inspectSelectedPart;$('#focus-inspect-part').onclick=inspectSelectedPart;$('#restore-inspection').onclick=restoreInspection;

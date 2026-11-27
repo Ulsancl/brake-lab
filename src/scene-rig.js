@@ -5,11 +5,11 @@ export function createDynoFixture(rotorRadius) {
   const group = new THREE.Group();
   group.name = 'brake-dyno-fixture';
   const deckY = -rotorRadius - .019;
-  const deckZ = -.163;
+  const deckX = -.038, deckZ = -.163;
   const floorY = deckY - .052;
   const batches = new Map();
 
-  const finish = (color, metalness, roughness) => new THREE.MeshStandardMaterial({ color, metalness, roughness, fog: false });
+  const finish = (color, metalness, roughness) => new THREE.MeshStandardMaterial({ color, metalness, roughness });
   const frame = finish(0x334956, .52, .55);
   const steel = finish(0x778b98, .84, .38);
   const tread = finish(0x202b33, .23, .69);
@@ -49,15 +49,15 @@ export function createDynoFixture(rotorRadius) {
   }
 
   // The base is low enough to clear the rotor even at the largest supported radius.
-  box(.625, .015, .458, steel, -.038, deckY - .0075, deckZ);
-  box(.602, .025, .436, frame, -.038, deckY - .0275, deckZ);
+  box(.625, .015, .458, steel, deckX, deckY - .0075, deckZ);
+  box(.602, .025, .436, frame, deckX, deckY - .0275, deckZ);
   for (const x of [-.288, .210]) for (const z of [-.335, .023]) {
     box(.064, .012, .059, tread, x, floorY + .006, z);
     mountingBolt(x, deckY, z);
   }
   for (const z of [-.294, -.188, -.082, .024]) {
-    box(.582, .0012, .006, tread, -.038, deckY + .0002, z);
-    box(.582, .0012, .0015, zinc, -.038, deckY + .0002, z + .004);
+    box(.582, .0012, .006, tread, deckX, deckY + .0002, z);
+    box(.582, .0012, .0015, zinc, deckX, deckY + .0002, z + .004);
   }
 
   // Stationary pedestal and gussets hold the knuckle behind the speed pickup.
@@ -123,7 +123,7 @@ export function createDynoFixture(rotorRadius) {
     group.add(mesh);
   }
   return {
-    group, floorY,
+    group, floorY, deckX, deckZ,
     dispose() {
       for (const mesh of group.children) {
         mesh.geometry.dispose();
