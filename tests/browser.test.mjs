@@ -41,6 +41,14 @@ const assertObservation=visible=>{assert(visible.top>=visible.viewportTop-1&&vis
 const range=(selector,value)=>page.locator(selector).evaluate((node,v)=>{node.value=String(v);node.dispatchEvent(new Event('input',{bubbles:true}));},value);
 const same=(actual,expected)=>assert.equal(createHash('sha256').update(JSON.stringify(actual)).digest('hex'),createHash('sha256').update(JSON.stringify(expected)).digest('hex'),'Project content must match exactly');
 try{
+ await record('the dev server keeps verification artifacts private while serving the Vite client',async()=>{
+  const marker=path.join(output,'private-fixture.txt');
+  await fs.writeFile(marker,'local verification fixture');
+  const url='http://127.0.0.1:5197/';
+  const response=await page.request.get(url+path.relative(root,marker).split(path.sep).join('/'));
+  assert.doesNotMatch(await response.text(),/local verification fixture/);
+  assert.equal((await page.request.get(url+'@vite/client')).ok(),true);
+ });
  await page.clock.install({time:new Date('2026-10-01T00:00:00Z')});
  await page.goto('http://127.0.0.1:5197/',{waitUntil:'networkidle'});
  await page.waitForFunction(()=>window.brakeLab?.getState().scene?.renderCount>0);

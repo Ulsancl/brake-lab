@@ -1,7 +1,10 @@
-import {defineConfig} from 'vite';
+import { defineConfig, normalizePath } from 'vite';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+const rootPath = normalizePath(fileURLToPath(new URL('.', import.meta.url)));
+const generatedPaths = ['.security-stage-*', 'output', 'release', 'dist'].map(directory => rootPath + directory + '/**');
 const csp = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'";
 export default defineConfig({
   base: './',
@@ -21,7 +24,7 @@ export default defineConfig({
   server: {
     host: '127.0.0.1', port: 5195, strictPort: true,
     fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**',
-      '**/.security-stage-*/**', '**/output/**', '**/release/**', '**/dist/**'] },
+      ...generatedPaths] },
     watch: { ignored: ['**/.security-stage-*', '**/.security-stage-*/**', '**/output/**', '**/release/**', '**/dist/**'] },
   },
 });
