@@ -21,6 +21,25 @@
   <label class="field">패드 평균 반경 <output data-output="padMeanRadius">125 mm</output><input data-setting="padMeanRadius" type="range" min="0.09" max="0.16" step="0.005" value="0.125"></label>
   <label class="field">바퀴당 배분 질량 <output data-output="mass">375 kg</output><input data-setting="mass" type="range" min="200" max="650" step="25" value="375"></label>
  </details>
+ <details>
+  <summary>디스크 온도와 냉각 조절</summary>
+  <div class="field">
+   <label for="initial-temperature">디스크 시작 온도</label>
+   <output for="initial-temperature" data-output="initialTemperatureC" aria-hidden="true">20 °C</output>
+   <input id="initial-temperature" data-setting="initialTemperatureC" type="range" min="-40" max="900" step="1" value="20">
+  </div>
+  <div class="field">
+   <label for="ambient-temperature">주변 공기 온도</label>
+   <output for="ambient-temperature" data-output="ambientTemperatureC" aria-hidden="true">20 °C</output>
+   <input id="ambient-temperature" data-setting="ambientTemperatureC" type="range" min="-40" max="60" step="1" value="20">
+  </div>
+  <div class="field">
+   <label for="disc-cooling">냉각 계수</label>
+   <output for="disc-cooling" data-output="coolingWattsPerK" aria-hidden="true">12 W/K</output>
+   <input id="disc-cooling" data-setting="coolingWattsPerK" type="range" min="0" max="100" step="1" value="12" aria-describedby="disc-cooling-note">
+  </div>
+  <p id="disc-cooling-note" class="hint">같은 온도 차이에서 냉각 계수가 클수록 공기와 더 많은 열을 주고받습니다. 패드 마찰 계수는 설정값을 유지합니다.</p>
+ </details>
  <div class="control-actions"><button id="start" class="primary">제동 시작</button><button id="reset">다시 출발</button></div>
  <div class="playback"><label>재생 속도 <select id="playback-rate"><option value="0.25">1/4</option><option value="0.5">1/2</option><option value="1">실시간</option></select></label><span id="run-status">준비</span></div>
  <div class="model-note">직선 제동 · 1휠 등가 모형<br>실제 차량의 성능·정비·안전을 판정하지 않습니다.</div>

@@ -1,4 +1,4 @@
-.brake-scene{position:relative;isolation:isolate;overflow:hidden;min-height:300px;background:#17212b;border-radius:12px}
+.brake-scene{position:relative;isolation:isolate;container-type:inline-size;overflow:hidden;min-height:300px;background:#1c2934;border-radius:12px}
 .focus-panel{display:none}
 .scene-toolbar input:disabled{opacity:.45;cursor:not-allowed}
 .scene-focus .workbench{display:flex;flex-direction:column;padding:0;gap:0}
@@ -28,9 +28,24 @@
 .brake-part-label[hidden]{display:none}
 .brake-scene-leaders polyline{stroke:#86a7b2;stroke-width:1;opacity:.42;vector-effect:non-scaling-stroke}
 .brake-scene-leaders polyline.selected{stroke:#7de5c4;stroke-width:1.5;opacity:1}
-.brake-scene-note,.brake-scene-state{position:absolute;pointer-events:none;z-index:3;border:1px solid #415c6b;background:#162630e8;color:#c5dce7;font:12px/1.5 system-ui,"Malgun Gothic",sans-serif;padding:6px 10px;border-radius:6px}
-.brake-scene-note{left:12px;right:12px;bottom:12px;width:fit-content;max-width:calc(100% - 24px)}
-.brake-scene-state{left:12px;top:12px;font-variant-numeric:tabular-nums}
+.brake-scene-note{position:absolute;pointer-events:none;z-index:3;left:12px;right:12px;bottom:12px;width:fit-content;max-width:calc(100% - 24px);border:1px solid #415c6b;background:#162630e8;color:#c5dce7;font:12px/1.5 system-ui,"Malgun Gothic",sans-serif;padding:6px 10px;border-radius:6px}
+.brake-scene-state{position:absolute;z-index:3;left:12px;top:12px;pointer-events:none;display:grid;grid-template-columns:1fr 1.06fr 1.13fr;width:min(385px,calc(100% - 24px));border:1px solid #5a6e79;border-radius:7px;background:#14212bef;color:#ecf4f8;box-shadow:0 2px 10px #0a131c55;font:11px/1.25 system-ui,"Malgun Gothic",sans-serif;font-variant-numeric:tabular-nums}
+.brake-rig-readout{display:grid;grid-template-rows:auto auto 10px auto;gap:3px;min-width:0;padding:6px 9px}
+.brake-rig-readout+.brake-rig-readout{border-left:1px solid #4d606b}
+.brake-rig-readout>span{color:#c7d5de}
+.brake-rig-readout>strong{color:#f2f6f8;font-size:15px;font-weight:650;line-height:1.15;white-space:nowrap}
+.brake-rig-readout>small{color:#b1c5cf;font-size:10px;line-height:1.15}
+.brake-rig-heat-track{position:relative;align-self:center;height:4px;margin-inline:2px;border-radius:2px;background:linear-gradient(90deg,#bdc9cf,#b58254)}
+.brake-rig-heat-track.has-value::after{position:absolute;top:-2px;left:var(--heat-position);width:3px;height:8px;border-radius:1px;background:#f5fafc;box-shadow:0 0 0 1px #19252c;transform:translateX(-50%);content:""}
+.brake-rig-pressure-trace{display:block;width:100%;height:10px;border-radius:2px;background:#30414c}
+.brake-rig-pressure-trace>path{fill:none;stroke:#96ddd2;stroke-width:1.25;vector-effect:non-scaling-stroke}
+.brake-rig-pressure-trace>.brake-rig-pressure-marker{stroke:#e5fbf7;stroke-width:2}
+.brake-rig-abs{grid-template-rows:auto auto 1fr}
+.brake-rig-abs>small{align-self:end}
+.brake-rig-abs[data-phase="increase"]>strong{color:#a6ded1}
+.brake-rig-abs[data-phase="hold"]>strong{color:#c4ddeb}
+.brake-rig-abs[data-phase="decrease"]>strong{color:#f0bc87}
 .brake-scene-range-note{position:absolute;right:12px;top:12px;z-index:3;max-width:48%;border:1px solid #9b8756;background:#342d20ed;color:#efdaac;font:11px/1.5 system-ui,"Malgun Gothic",sans-serif;padding:6px 8px;border-radius:6px}
 .brake-scene-range-note[hidden]{display:none}
-@media(max-width:520px){.brake-part-label{font-size:11px;padding:4px 5px}.brake-scene-note,.brake-scene-state{font-size:11px;padding:5px 8px}.brake-scene-note{left:9px;bottom:9px;max-width:calc(100% - 18px)}.brake-scene-state{left:9px;top:9px}}
+@container (max-width: 650px){.brake-scene-range-note{top:auto;bottom:48px;max-width:calc(100% - 24px)}}
+@container (max-width: 410px){.brake-part-label{font-size:11px;padding:4px 5px}.brake-scene-note{font-size:11px;padding:5px 8px;left:9px;bottom:9px;max-width:calc(100% - 18px)}.brake-scene-state{left:9px;top:9px;width:calc(100% - 18px)}.brake-rig-readout{padding-inline:6px}.brake-rig-readout>strong{font-size:13px}.brake-scene-range-note{right:9px;bottom:42px;max-width:calc(100% - 18px)}}
