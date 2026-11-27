@@ -9,6 +9,17 @@ const file = () => makeProject(normalizeSettings({ speedKmh: 80 }), { mode: 'cut
 const rejects = (data, code) => assert.throws(() => parseProject(typeof data === 'string' ? data : JSON.stringify(data)),
   (error) => error instanceof ProjectError && error.preserveOriginal && (!code || error.code === code));
 
+test('structural guard preserves both complete sample arrays and bounds parser allocations', () => {
+  const settings = { pressureBar: 0 };
+  const comparison = compareAbs(settings);
+  assert.equal(comparison.withAbs.samples.length, 501);
+  assert.equal(comparison.withoutAbs.samples.length, 501);
+  const data = makeProject(settings, {}, comparison);
+  assert.deepEqual(parseProject(JSON.stringify(data, null, 2)).comparison, comparison);
+  const nested = Array.from({ length: 16 }).reduce(value => [value], null);
+  rejects({ ...data, extra: nested }, 'PROJECT_STRUCTURE_LIMIT');
+});
+
 test('project round trip retains original results and merges only saved view keys', () => {
   const data = file(); const parsed = parseProject(JSON.stringify(data), { selectedPart: 'rotor', camera: 'front' });
   assert.equal(data.format, projectFormat); assert.equal(data.version, projectVersion);

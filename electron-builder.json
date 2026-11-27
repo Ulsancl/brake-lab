@@ -3,10 +3,18 @@
   "productName": "Brake Lab",
   "copyright": "Brake Lab",
   "asar": true,
+  "electronFuses": {
+    "runAsNode": false,
+    "enableNodeOptionsEnvironmentVariable": false,
+    "enableNodeCliInspectArguments": false,
+    "enableEmbeddedAsarIntegrityValidation": true,
+    "onlyLoadAppFromAsar": true,
+    "grantFileProtocolExtraPrivileges": false
+  },
   "publish": null,
   "electronDist": "node_modules/electron/dist",
   "directories": { "output": "release/windows", "buildResources": "desktop/assets" },
-  "files": ["desktop/**/*.cjs", "desktop/assets/app.ico", "dist/**/*", "package.json"],
+  "files": ["desktop/**/*.cjs", "desktop/assets/app.ico", "dist/**/*", "shared/project-limits.js", "package.json"],
   "extraResources": [
     { "from": "LICENSE.txt", "to": "LICENSE.txt" },
     { "from": "docs", "to": "docs", "filter": ["*.md"] },

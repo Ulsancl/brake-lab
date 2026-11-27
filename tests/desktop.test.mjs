@@ -16,13 +16,20 @@ const executablePath = packaged ? process.env.BRAKE_DESKTOP_EXE : require('elect
 assert.ok(path.isAbsolute(executablePath), 'The tested executable must have an absolute path');
 const output = artifactDirectory(root, path.join(root, 'output', `${packaged ? 'desktop-packaged' : 'desktop'}-v${expectedVersion}`));
 await fs.mkdir(output, { recursive: true });
-const profile = await fs.mkdtemp(path.join(output, 'profile-'));
-const env = { ...process.env, BRAKE_LAB_DATA_DIR: profile };
+const profileParent = await fs.mkdtemp(path.join(output, 'profile-'));
+const profile = path.join(profileParent, 'Brake Lab');
+const sourceApp = path.join(root, 'output', 'desktop-source-app');
+const env = { ...process.env, BRAKE_LAB_TEST_PROFILE_PARENT: profileParent,
+  BRAKE_LAB_DATA_DIR: path.join(profileParent, 'ignored') };
 delete env.ELECTRON_RUN_AS_NODE;
 const projectPath = path.join(output, '브레이크 실험.brake.json');
 let app, page, saved, windowRestoration;
 const checks = [], errors = [], remoteRequests = [];
 const state = () => page.evaluate(() => window.brakeLab.getState());
+const compare = async () => {
+  await page.locator('#compare-abs').click();
+  await page.locator('#compare-abs').waitFor({ state: 'visible' });
+};
 const project = () => page.evaluate(() => window.brakeLab.project());
 const observation = () => page.evaluate(() => {
   const r = document.querySelector('#scene').getBoundingClientRect(), panel = document.querySelector('.workbench');
@@ -45,7 +52,7 @@ async function waitFor(predicate, label, timeout = 45000) {
 }
 async function check(name, action) { await action(); checks.push(name); console.log(`PASS ${name}`); }
 async function launch() {
-  app = await electron.launch({ executablePath, args: packaged ? [] : [root], env, timeout: 45000 });
+  app = await electron.launch({ executablePath, args: packaged ? [] : [sourceApp], env, timeout: 45000 });
   page = await app.firstWindow(); page.setDefaultTimeout(45000);
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -172,7 +179,7 @@ try {
     const clockTime = new Date('2026-10-01T08:00:00Z');
     await page.clock.install({ time: clockTime }); await page.clock.pauseAt(new Date(clockTime.getTime() + 1000));
     try {
-      await page.locator('#compare-abs').click();
+      await compare();
       assert.equal(await page.evaluate(() => document.activeElement.id), 'comparison-summary');
       const captured = await project(), originalView = (await state()).view;
       await menu('실험', '제동 시작 / 일시정지'); await waitFor(async () => (await state()).running, 'menu play');
@@ -183,7 +190,7 @@ try {
       const pausedTime = (await state()).snapshot.time;
       assert.deepEqual((await observation()).scroll, playingPosition);
       assert.equal(await page.locator('#run-status').textContent(),'일시정지');assert.equal(await page.locator('#start').textContent(),'이어서 제동');
-      await page.locator('#compare-abs').click();
+      await compare();
       assert.equal(await page.evaluate(() => document.activeElement.id), 'comparison-summary');
       assert.equal((await state()).snapshot.time, pausedTime);
       await nativeShortcut('P', true); await waitFor(async () => (await state()).running, 'native shortcut play');
@@ -217,7 +224,7 @@ try {
   await check('same-condition ABS result stays captured when the working settings change', async () => {
     await page.evaluate(() => window.brakeLab.setSettings({ speedKmh: 80, pressureBar: 60, road: 'medium', mass: 425, caliper: 'fixed' }));
     await page.locator('[data-mode="exploded"]').click(); await page.locator('#explode').fill('0.4'); await page.locator('#labels').uncheck();
-    await page.locator('#compare-abs').click();
+    await compare();
     await waitFor(async () => (await state()).hasComparison, 'captured comparison');
     const explanation = await page.evaluate(() => { const node=document.querySelector('#comparison-summary'),r=node.getBoundingClientRect();return {text:node.textContent,top:r.top,bottom:r.bottom,height:innerHeight,focus:document.activeElement.id}; });
     assert.ok(explanation.top>=0&&explanation.bottom<=explanation.height,JSON.stringify(explanation));
@@ -307,7 +314,7 @@ try {
   await check('second launch restores and focuses the existing single window', async () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
     await new Promise((resolve, reject) => {
-      const child = spawn(executablePath, packaged ? [] : [root], { cwd: root, env, windowsHide: true, stdio: 'ignore' });
+      const child = spawn(executablePath, packaged ? [] : [sourceApp], { cwd: root, env, windowsHide: true, stdio: 'ignore' });
       const timer = setTimeout(() => { child.kill(); reject(new Error('Duplicate process did not exit')); }, 30000);
       child.on('error', error => { clearTimeout(timer); reject(error); });
       child.on('exit', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`Duplicate launch exit ${code}`)); });

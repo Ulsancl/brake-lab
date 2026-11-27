@@ -236,3 +236,25 @@ test('invalid timestep and duration fail clearly instead of poisoning state', ()
   for (const duration of [NaN, Infinity, -1, 91]) assert.throws(() => runExperiment({}, { duration }), RangeError);
   assert.equal(runExperiment({}, { duration: 0 }).summary.elapsedTime, 0);
 });
+test('comparison work allowance covers the combined integrator calls for both runs', () => {
+  const settings = { speedKmh: 90, pressureBar: 30 };
+  const options = { duration: 0.001, maxRk4Calls: 1 };
+  const run = runExperiment(settings, options);
+  assert.ok(run.summary.elapsedTime > 0);
+  assert.throws(() => compareAbs(settings, options), /계산량/);
+  assert.deepEqual(compareAbs(settings, { ...options, maxRk4Calls: 2 }).withAbs, run);
+});
+
+test('free rolling keeps wheel speed, distance and passive cooling analytically consistent', () => {
+  const settings = { speedKmh: 30, pressureBar: 0, initialTemperatureC: 100, ambientTemperatureC: 20 };
+  const { withAbs: run } = compareAbs(settings);
+  const last = run.samples.at(-1);
+  assert.equal(last.stopped, false);
+  close(last.speed, settings.speedKmh / 3.6);
+  close(last.distance, last.speed * last.time, 1e-7);
+  close(last.wheelOmega * run.settings.wheelRadius, last.speed);
+  const capacity = run.settings.discMass * run.settings.discHeatCapacity;
+  close(last.discTemperatureC, 20 + 80 * Math.exp(-last.time * run.settings.coolingWattsPerK / capacity), 1e-8);
+  close(last.thermalResidual, 0, 1e-8);
+  assert.equal(last.brakeHeat, 0);
+});

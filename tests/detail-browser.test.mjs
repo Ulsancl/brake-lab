@@ -52,7 +52,7 @@ async function captureInspection(name) {
 
 try {
   await mkdir(output, { recursive: true });
-  server = await createServer({ root, server: { host: '127.0.0.1', port: 5242, strictPort: true } });
+  server = await createServer({ root, mode: 'test', server: { host: '127.0.0.1', port: 5242, strictPort: true } });
   await server.listen();
   browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-webgl'] });
   page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1, acceptDownloads: true });
@@ -271,6 +271,7 @@ try {
 
   await check('Ordinary selection retains the camera during inspection and settings refresh facts without clearing comparison', async () => {
     await page.locator('#compare-abs').click();
+    await page.locator('#compare-abs').waitFor({ state: 'visible' });
     const comparison = (await project()).comparison;
     await select('bearing'); await page.locator('#inspect-part').click();
     const inspected = await state();

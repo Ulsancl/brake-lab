@@ -10,7 +10,7 @@
 
 **[Windows 설치파일 다운로드](https://github.com/Ulsancl/brake-lab/releases/tag/v1.1.1)**
 
-릴리스에서 `Brake-Lab-Setup-1.1.1.exe`와 같은 이름의 `.sha256` 확인 파일을 받아 확인한 뒤 실행하고 설치 위치를 선택하세요. 설치 후 바탕화면이나 시작 메뉴의 **Brake Lab** 아이콘으로 시작합니다. Node.js 설치나 별도 서버 실행이 필요 없으며, 계산과 3D 화면이 앱에 포함되어 인터넷 연결 없이 사용할 수 있습니다. 설치파일에는 코드 서명이 없습니다.
+공식 배포 파일의 Windows 속성에서 디지털 서명과 배포 안내에 적힌 게시자를 확인하세요. 함께 제공된 `.sha256` 파일로 설치 파일의 다운로드 무결성도 확인할 수 있습니다. 설치 후 바탕화면이나 시작 메뉴의 **Brake Lab** 아이콘으로 시작합니다. Node.js 설치나 별도 서버 실행이 필요 없으며, 계산과 3D 화면이 앱에 포함되어 인터넷 연결 없이 사용할 수 있습니다. 기존 1.1.1 설치 파일과 검증용 CI 아티팩트는 무서명입니다.
 
 처음 비교를 실행하면 결과가 바로 보이도록 화면이 이동합니다. 저장된 결과를 바탕으로 더 짧은 거리·더 긴 거리·비슷한 거리·정지 미완료를 쉬운 문장으로 설명합니다. 처음부터 정지한 조건도 별도로 안내하며, 원래 조건과 상세 수치는 그대로 표시합니다.
 
@@ -40,4 +40,4 @@
 
 ## 소스 검증 환경
 
-Node.js 24.19.0 이상을 사용합니다. `npm ci`, `npm test`, `npm run build`, `npm run test:browser`, `npm run test:detail`로 계산·형상·화면을 검증합니다. Windows 앱은 `node scripts/desktop.mjs prepare-test` 후 `npm run test:desktop`으로 확인하고 `npm run package:desktop`으로 설치파일을 만듭니다. 1.1.0의 소스·독립 실행본 검증과 이전 1.0.0의 실제 설치 검증 기록을 구분합니다.
+Node.js 24.19.0 이상을 사용합니다. `npm ci --ignore-scripts`로 의존성을 설치하고 `npx --no-install playwright install chromium`으로 검증용 브라우저를 준비합니다. `npm test`, `npm run build`, `npm run test:browser`, `npm run test:detail`로 계산·형상·화면을 검증합니다. Windows 앱은 `npm run test:desktop`으로 확인하고 `npm run package:desktop`으로 무서명 검증용 설치 파일을 만듭니다. 공식 배포 절차는 [안전한 빌드와 검증 산출물](docs/security-builds.md)을 참고하세요.

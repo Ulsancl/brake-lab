@@ -83,6 +83,7 @@ export function publishDirectory(root, source, target) {
   secureDirectory(root, path.dirname(target));
   if (fs.lstatSync(target, { throwIfNoEntry: false })) {
     checkTree(root, target);
+    if (!fs.statSync(target).isDirectory()) throw new Error('Output must be a directory');
     // Keep the previous generated result until the new one is published.
     const backup = path.join(path.dirname(source), 'previous');
     fs.renameSync(target, backup);

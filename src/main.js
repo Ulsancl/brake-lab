@@ -5,9 +5,10 @@ import './comparison.css';
 import './detail.css';
 import { supportsAutosaveLock, withAutosaveLock, writeIfUnchanged } from './browser-autosave.js';
 import { createAutosaveUI, getBrowserLocks, readBrowserDraft } from './autosave-ui.js';
-import {defaultSettings,normalizeSettings,createSimulation,compareAbs,MODEL_VERSION} from './model.js';
+import {defaultSettings,normalizeSettings,createSimulation,MODEL_VERSION} from './model.js';
 import {createBrakeScene} from './scene.js';
-import {projectFormat,parseProject,makeProject} from './project.js';
+import {parseProject,makeProject} from './project.js';
+import {MAX_PROJECT_BYTES,decodeProjectBytes} from '../shared/project-limits.js';
 import {describeComparison} from './comparison-summary.js';
 import {describeComparisonEnergy} from './comparison-energy.js';
 import {brakeDetail} from './detail-readouts.js';
@@ -16,7 +17,7 @@ import {renderBrakeDetails} from './detail-panel.js';
 const $=selector=>document.querySelector(selector),all=selector=>[...document.querySelectorAll(selector)];
 const partPickers=all('#scene-part, #focus-part');
 const supplyArrows=all('[data-flow="supply"]'),returnArrows=all('[data-flow="return"]');
-const storageKey='brake-lab-project-v1',format=projectFormat;
+const storageKey='brake-lab-project-v1';
 const desktop=window.brakeDesktop?.isDesktop?window.brakeDesktop:null;
 const number=(v,d=1)=>Number.isFinite(v)?v.toLocaleString('ko-KR',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
 const thermalNumber = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 3 });
@@ -70,8 +71,7 @@ try{
   try{const saved=parseProject(raw,view);({settings,comparison,view}=saved);}
   catch(error){
    recoveryOriginal=raw;
-   const data=(()=>{try{return JSON.parse(raw);}catch{return null;}})();
-   if(error.futureVersion||data?.format===format&&data.version>1){storageBlocked=true;storageMessage='새로운 저장 형식을 보호합니다. 현재 실험은 파일로 저장해 주세요.';}
+   if(error.futureVersion){storageBlocked=true;storageMessage='새로운 저장 형식을 보호합니다. 현재 실험은 파일로 저장해 주세요.';}
    else archiveCorruptPrimary(raw);
   }
  }
@@ -174,10 +174,10 @@ function render(){
  renderBrakeDetails(view.selectedPart,snapshot,settings,scene?.getDiagnostics().inspection);
  syncFocusPanel();
 }
-function advance(seconds){
+function advance(seconds, until=Infinity){
  if(!Number.isFinite(seconds)||seconds<0||seconds>60)throw new Error('진행 시간은 0–60초여야 합니다.');
  accumulator+=seconds;
- while(accumulator>=.001-1e-10&&!snapshot.stopped){simulation.step(.001);snapshot=simulation.snapshot();accumulator-=.001;}
+ while(accumulator>=.001-1e-10&&!snapshot.stopped&&performance.now()<until){snapshot=simulation.step(.001);accumulator-=.001;}
  if(snapshot.stopped){accumulator=0;setRunning(false);}render();return structuredClone(snapshot);
 }
 function drawTrace(){
@@ -211,9 +211,66 @@ function showComparison(){
  ].join(' · ');
  drawTrace();
 }
-function runComparison(){window.brakeDesktop?.setBusy(true);try{comparison=compareAbs(settings);showComparison();persist();$('#results').scrollIntoView({block:'start',behavior:'auto'});$('#comparison-summary').focus({preventScroll:true});toast('비교 결과를 보관했습니다. 조건을 바꾸어 다시 비교해 보세요.','comparison');return structuredClone(comparison);}catch(error){toast(error.message);throw error;}finally{window.brakeDesktop?.setBusy(false);}}
-function loadProject(text){const parsed=parseProject(text,view);settings=parsed.settings;comparison=parsed.comparison;view={...view,...parsed.view};reset();syncInputs();updateParts();showComparison();persist();return true;}
+let activeComparison;
+function setComparisonBusy(busy){
+ $('#compare-abs').disabled=busy;
+ $('#compare-abs').hidden=busy;
+ $('#cancel-comparison').hidden=!busy;
+ desktop?.setBusy(busy);
+}
+function finishComparison(job, result){
+ if(activeComparison!==job)return;
+ activeComparison=undefined;
+ job.worker.terminate();
+ setComparisonBusy(false);
+ job.resolve(result);
+}
+function cancelComparison(notify=false){
+ if(!activeComparison)return;
+ finishComparison(activeComparison);
+ if(notify){
+  $('#compare-abs').focus({preventScroll:true});
+  toast('비교를 취소했습니다.');
+ }
+}
+function runComparison(){
+ if(activeComparison)return activeComparison.promise;
+ try{
+  const worker=new Worker(new URL('./comparison-worker.js',import.meta.url),{type:'module'});
+  const {promise,resolve}=Promise.withResolvers();
+  const job={worker,promise,resolve};
+  activeComparison=job;
+  setComparisonBusy(true);
+  if(document.activeElement===document.body)$('#cancel-comparison').focus({preventScroll:true});
+  worker.onmessage=({data})=>{
+   if(activeComparison!==job)return;
+   if(data.error){
+    finishComparison(job);
+    toast(data.error);
+    return;
+   }
+   try{
+    comparison=data.comparison;
+    showComparison();persist();
+    $('#results').scrollIntoView({block:'start',behavior:'auto'});
+    $('#comparison-summary').focus({preventScroll:true});
+    toast('비교 결과를 보관했습니다. 조건을 바꾸어 다시 비교해 보세요.','comparison');
+    finishComparison(job,comparison);
+   }catch(error){finishComparison(job);toast(error.message);}
+  };
+  worker.onerror=event=>{
+   event.preventDefault();
+   if(activeComparison!==job)return;
+   finishComparison(job);
+   toast('비교 계산을 실행하지 못했습니다. 다시 시도해 주세요.');
+  };
+  worker.postMessage(settings);
+  return promise;
+ }catch(error){cancelComparison();toast(error.message);return Promise.resolve();}
+}
+function loadProject(text){const parsed=parseProject(text,view);cancelComparison();settings=parsed.settings;comparison=parsed.comparison;view={...view,...parsed.view};reset();syncInputs();updateParts();showComparison();persist();return true;}
 function newProject(){
+ cancelComparison();
  loadSequence++;
  $('#project-file').value='';
  comparison=null;
@@ -236,7 +293,23 @@ all('[data-setting]').forEach(el=>el.addEventListener(el.tagName==='SELECT'||el.
 all('[data-caliper]').forEach(b=>b.onclick=()=>setSettings({caliper:b.dataset.caliper}));
 all('[data-mode]').forEach(b=>b.onclick=()=>{view.mode=b.dataset.mode;syncInputs();render();persist();});
 all('[data-camera]').forEach(b=>b.onclick=()=>{view.camera=b.dataset.camera;scene?.setCamera(view.camera);browserAutosave?.markDirty();});
-$('#explode').oninput=e=>{view.explode=Number(e.target.value);render();persist();};$('#labels').onchange=e=>{view.labels=e.target.checked;render();persist();};$('#focus').onclick=()=>toggleFocus();$('#start').onclick=togglePlayback;$('#reset').onclick=reset;$('#playback-rate').onchange=e=>{rate=Number(e.target.value);last=performance.now();syncFocusPanel();};$('#compare-abs').onclick=runComparison;$('#clear-results').onclick=()=>{comparison=null;showComparison();persist();};$('#help').onclick=()=>$('#help-dialog').showModal();$('#close-help').onclick=()=>$('#help-dialog').close();$('#save-project').onclick=saveProject;$('#open-project').onclick=openProject;$('#project-file').onchange=async e=>{const sequence=++loadSequence;try{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024)throw new Error('실험 파일은 10 MiB 이하로 열어 주세요.');const text=await file.text();if(sequence!==loadSequence)return;loadProject(text);toast('조건과 저장된 비교 결과를 복원했습니다.');}catch(error){if(sequence===loadSequence)toast(error.message);}finally{if(sequence===loadSequence)e.target.value='';}};
+$('#explode').oninput=e=>{view.explode=Number(e.target.value);render();persist();};$('#labels').onchange=e=>{view.labels=e.target.checked;render();persist();};$('#focus').onclick=()=>toggleFocus();$('#start').onclick=togglePlayback;$('#reset').onclick=reset;$('#playback-rate').onchange=e=>{rate=Number(e.target.value);last=performance.now();syncFocusPanel();};$('#clear-results').onclick=()=>{cancelComparison();comparison=null;showComparison();persist();};$('#help').onclick=()=>$('#help-dialog').showModal();$('#close-help').onclick=()=>$('#help-dialog').close();$('#save-project').onclick=saveProject;$('#open-project').onclick=openProject;
+$('#compare-abs').onclick=()=>{void runComparison();};
+$('#cancel-comparison').onclick=()=>cancelComparison(true);
+window.addEventListener('pagehide',()=>cancelComparison());
+$('#project-file').onchange=async e=>{
+ const sequence=++loadSequence;
+ try{
+  const file=e.target.files?.[0];
+  if(!file)return;
+  if(file.size>MAX_PROJECT_BYTES)throw new Error('실험 파일은 10 MiB 이하로 열어 주세요.');
+  const bytes=await file.arrayBuffer();
+  if(sequence!==loadSequence)return;
+  loadProject(decodeProjectBytes(bytes));
+  toast('조건과 저장된 비교 결과를 복원했습니다.');
+ }catch(error){if(sequence===loadSequence)toast(error.message);}
+ finally{if(sequence===loadSequence)e.target.value='';}
+};
 document.addEventListener('keydown',event=>{if(event.key==='Escape'){if(!event.repeat)toggleFocus(false);return;}if(event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,select,textarea,button,[contenteditable=true]')||$('#help-dialog').open)return;if(event.key.toLowerCase()==='f'){event.preventDefault();if(!event.repeat)toggleFocus();}if(event.code==='Space'){event.preventDefault();if(!event.repeat)$('#start').click();}});
 $('#new-project').onclick=newProject;
 window.brakeDesktop?.onCommand(command=>{if(command==='save-project')void saveProject();else if(command==='open-project')void openProject();else if(command==='toggle-running')$('#start').click();else if(command==='focus')toggleFocus();else if(command==='help')$('#help-dialog').showModal();else if(command==='new-project')newProject();});
@@ -262,6 +335,8 @@ else{
  else if(tabDraft.restored)persist();
  window.addEventListener('pagehide',flushBrowserOnHide);
 }
-function frame(now){const elapsed=last?Math.max(0,(now-last)/1000):0;last=now;if(running&&!document.hidden&&!externalClock){if(elapsed>1){setRunning(false);toast('화면이 오래 지연되어 일시정지했습니다. '+$('#start').textContent+'을 눌러 이어가세요.');}else advance(elapsed*rate);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+function frame(now){const elapsed=last?Math.max(0,(now-last)/1000):0;last=now;if(running&&!document.hidden&&!externalClock){if(elapsed>1){setRunning(false);toast('화면이 오래 지연되어 일시정지했습니다. '+$('#start').textContent+'을 눌러 이어가세요.');}else advance(elapsed*rate,performance.now()+8);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+if(import.meta.env.MODE==='test'){
 window.brakeLab={getState:()=>({settings:structuredClone(settings),snapshot:structuredClone(snapshot),detail:brakeDetail(snapshot,settings),view:{...view},running,focused,scene:scene?.getDiagnostics(),hasComparison:!!comparison,storageBlocked:storageBlocked||Boolean(browserAutosave&&!browserAutosave.canSave())}),setSettings,reset,advance,runComparison,project,loadProject,selectPart,toggleFocus,scene};
 window.advanceTime=ms=>{if(!Number.isFinite(ms)||ms<0||ms>60000)throw new Error('진행 시간은 0–60000 밀리초여야 합니다.');externalClock=true;if(running)advance(ms/1000*rate);else render();};window.render_game_to_text=()=>JSON.stringify({model:MODEL_VERSION,coordinateSystem:'m, s, N, Pa; +Z wheel axle, +Y up; one-wheel straight braking',running,focused,settings,snapshot,detail:brakeDetail(snapshot,settings),view,inspection:scene?.getDiagnostics().inspection,hasComparison:!!comparison});
+}
