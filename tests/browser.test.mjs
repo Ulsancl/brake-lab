@@ -133,6 +133,54 @@ try{
   await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.down('Space');const running=(await state()).running;await page.keyboard.down('Space');await page.keyboard.down('Space');assert.equal((await state()).running,running);await page.keyboard.up('Space');
   await page.keyboard.down('f');const focused=(await state()).focused;await page.keyboard.down('f');await page.keyboard.down('f');assert.equal((await state()).focused,focused);await page.keyboard.up('f');await page.keyboard.press('Escape');
  });
+ await record('500px touch canvas, compact callouts and keyboard-accessible file actions',async()=>{
+  const mobile=await browser.newContext({viewport:{width:500,height:900},isMobile:true,hasTouch:true,acceptDownloads:true});
+  try{
+   const touch=await mobile.newPage();
+   touch.on('pageerror',error=>errors.push(error.message));
+   await touch.goto('http://127.0.0.1:5197/');
+   await touch.waitForFunction(()=>window.brakeLab?.getState().scene?.renderCount>0);
+   assert.equal(await touch.evaluate(()=>document.documentElement.scrollWidth),500);
+   assert.equal(await touch.locator('.brake-part-label:visible').count(),3);
+   const picker=touch.getByRole('combobox',{name:'3D 화면에서 살펴볼 부품'});
+   await picker.selectOption('pump');
+   assert.equal(await touch.locator('#part-name').textContent(),'복귀 펌프');
+   await touch.locator('.brake-part-label[data-part-id="pump"]').waitFor();
+   const rotorPoint=await touch.locator('.brake-part-label[data-part-id="rotor"]').evaluate(button=>{
+    const scene=button.closest('#scene'),rect=scene.querySelector('canvas').getBoundingClientRect();
+    const index=[...scene.querySelectorAll('.brake-part-label')].indexOf(button);
+    const anchor=scene.querySelectorAll('polyline')[index].points.getItem(0);
+    return {x:rect.left+anchor.x,y:rect.top+anchor.y};
+   });
+   await touch.touchscreen.tap(rotorPoint.x,rotorPoint.y);
+   assert.equal(await picker.inputValue(),'rotor');
+   await touch.evaluate(()=>window.brakeLab.advance(.05));
+   assert.equal(await touch.locator('[data-flow="supply"].active').count(),2);
+   assert.equal(await touch.locator('#force-readout.active').count(),1);
+
+   const actions=touch.getByRole('group',{name:'실험 파일 및 안내'});
+   for(const target of await actions.getByRole('button').all()){
+    const bounds=await target.boundingBox();
+    assert(bounds.width>=44&&bounds.height>=44);
+   }
+   const help=actions.getByRole('button',{name:'사용 안내'});
+   await help.focus();await touch.keyboard.press('Enter');
+   await touch.getByRole('dialog').waitFor();
+   await touch.keyboard.press('Escape');
+   await touch.getByRole('dialog').waitFor({state:'hidden'});
+   await touch.evaluate(()=>{window.brakeLab.setSettings({pressureBar:73});window.brakeLab.runComparison();});
+   const downloading=touch.waitForEvent('download');
+   await actions.getByRole('button',{name:'실험 저장'}).tap();
+   const filename=await (await downloading).path();
+   await actions.getByRole('button',{name:'새 실험'}).tap();
+   assert.equal(await touch.evaluate(()=>window.brakeLab.getState().hasComparison),false);
+   const opening=touch.waitForEvent('filechooser');
+   await actions.getByRole('button',{name:'실험 열기'}).tap();
+   await (await opening).setFiles(filename);
+   await touch.waitForFunction(()=>window.brakeLab.getState().settings.pressureBar===73);
+   assert.equal(await touch.evaluate(()=>window.brakeLab.getState().hasComparison),true);
+  }finally{await mobile.close();}
+ });
  await record('Mobile 390px layout, visible labels and no horizontal page overflow',async()=>{
   await page.setViewportSize({width:390,height:844});await page.clock.runFor(100);await page.evaluate(()=>window.brakeLab.scene.resize());const bounds=await page.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));assert(bounds.scroll<=bounds.client+1,JSON.stringify(bounds));assert((await state()).scene.labels.visible>0);
   await page.screenshot({path:path.join(output,'mobile-390.png'),fullPage:true});

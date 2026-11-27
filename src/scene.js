@@ -7,6 +7,8 @@ import { createRigInstruments, rotorHeatRatio } from './scene-instruments.js';
 import { createDynoFixture } from './scene-rig.js';
 
 const TAU = Math.PI * 2;
+const COMPACT_SCENE_WIDTH = 520;
+const LABEL_PRIORITY = ['rotor','caliper','pads','pistons','hub','bearing','hydraulic-unit','sensor','seals','boots','slide-pins','hose','valves','pump','encoder','bleeder','bracket','pad-hardware','knuckle'];
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const DEFAULT_VIEW = Object.freeze({ mode: 'cutaway', cutaway: .65, explode: .5, labels: true, selectedPart: null, quality: 'auto', camera: 'isometric' });
@@ -104,7 +106,8 @@ function normalizeView(view = {}) {
 }
 
 export function layoutBrakeLabels(candidates, width, height, { top = 62, bottom = height - 58 } = {}) {
-  const labelWidth=Math.min(width<480?108:126,width*.28),separation=30;
+  const compact=width<=COMPACT_SCENE_WIDTH;
+  const labelWidth=Math.min(compact?102:126,width*.28),labelHeight=compact?36:25,separation=labelHeight+6;
   bottom=Math.max(top,bottom);
   const capacity=Math.max(1,Math.floor((bottom-top)/separation)+1),columns=[[],[]],placements=[];
   for(const candidate of candidates)columns[candidate.x<width*.48?0:1].push(candidate);
@@ -114,7 +117,7 @@ export function layoutBrakeLabels(candidates, width, height, { top = 62, bottom 
     for(let index=0;index<retained.length;index++){
       const entry=retained[index],remaining=retained.length-index-1,y=clamp(Math.max(entry.y,previous+separation),top,bottom-remaining*separation);previous=y;
       const left=side===0?10:width-labelWidth-10,edgeX=side===0?left+labelWidth:left;
-      placements.push({...entry,left,top:y-12,width:labelWidth,height:25,y,edgeX,kneeX:edgeX+(side===0?12:-12),anchorX:clamp(entry.x,1,width-1),anchorY:clamp(entry.y,1,height-1)});
+      placements.push({...entry,left,top:y-labelHeight/2,width:labelWidth,height:labelHeight,y,edgeX,kneeX:edgeX+(side===0?12:-12),anchorX:clamp(entry.x,1,width-1),anchorY:clamp(entry.y,1,height-1)});
     }
   }
   return placements;
@@ -263,7 +266,7 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   const group = new THREE.Group(); group.name='generic-brake-assembly';
   const noise=castNoise(), rings=machinedRings(), ringAlbedo=machinedRings(true);
   for (const texture of [noise,rings,ringAlbedo]) resources.textures.add(texture);
-  const material = options => { const value = new THREE.MeshStandardMaterial({fog:false,...options});resources.materials.add(value);return value; };
+  const material = options => { const value = new THREE.MeshStandardMaterial(options);resources.materials.add(value);return value; };
   const coldFace = new THREE.Color(0xbdc9cf), hotFace = new THREE.Color(0xb58254);
   const materials = {
     iron:material({color:0x56616a,metalness:.88,roughness:.48,bumpMap:noise,bumpScale:.00038}),
@@ -276,9 +279,10 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     aluminum:material({color:0x91a2ac,metalness:.86,roughness:.36,bumpMap:noise,bumpScale:.00025}),
     black:material({color:0x182229,metalness:.08,roughness:.94}),
     friction:material({color:0x454a48,metalness:.12,roughness:.91,bumpMap:noise,bumpScale:.00018}),
-    cut:material({color:0xce976e,metalness:.32,roughness:.58}),
+    cut:material({color:0xefaa68,metalness:.38,roughness:.47,emissive:0xb96934,emissiveIntensity:.17}),
     copper:material({color:0xa96b42,metalness:.83,roughness:.33}),
-    fluid:material({color:0xdbac51,metalness:.15,roughness:.34,transparent:true,opacity:.65}),
+    fluid:material({color:0x4f9b91,metalness:.15,roughness:.34,transparent:true,opacity:.80}),
+    hose:material({color:0x202f36,metalness:.08,roughness:.82}),
     sensor:material({color:0x293d49,metalness:.08,roughness:.72}),
     inlet:material({color:0x478886,metalness:.50,roughness:.35}),
     outlet:material({color:0x78545e,metalness:.50,roughness:.35}),
@@ -320,7 +324,7 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   const rotorStart=section?Math.PI/2+.10:0, shellStart=section?Math.PI/2:0, shellLength=section?Math.PI+(.5-view.cutaway)*.65:TAU;
   const R=settings.discOuterRadius, I=settings.discInnerRadius, T=settings.discThickness, padR=settings.padMeanRadius, scale=R/.18;
   const plate=Math.min(.0045,T*.24), ventGap=T-2*plate;
-  const rotor=makePart('rotor',[R*.78,R*.35,T/2],[0,0,.11]); const rotorSpin=new THREE.Group();rotor.add(rotorSpin);spins.push(rotorSpin);
+  const rotor=makePart('rotor',[-R*.46,-R*.66,T/2],[0,0,.11]); const rotorSpin=new THREE.Group();rotor.add(rotorSpin);spins.push(rotorSpin);
   for (const back of [-T/2, T/2 - plate]) {
     mesh(rotorSpin,rotorPlate(I,R,back,back+plate,rotorStart,extent),[materials.iron,materials.rotorFace,materials.cut]);
   }
@@ -397,10 +401,29 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     geometry.rotateY(Math.PI/2);geometry.translate(x,0,0);mesh(caliper,geometry,materials.cast);
   }
   const webPoints=[[-.061,bridgeOuter-.024],[-.041,bridgeOuter+.002],[.041,bridgeOuter+.002],[.061,bridgeOuter-.024],[.043,bridgeInner],[-.043,bridgeInner]];
-  mesh(caliper,extrudedPolygon(section?clipLeft(webPoints):webPoints,.013,bridgeBack-.006),materials.cast);
-  if(settings.caliperType==='fixed')mesh(caliper,extrudedPolygon(section?clipLeft(webPoints):webPoints,.013,bridgeFront-.006),materials.cast);
+  function caliperWeb(points, depth, z) {
+    const geometry = extrudedPolygon(section ? clipLeft(points) : points, depth, z);
+    if (section) {
+      // Color the flat wall exposed at x=0 and keep the bevels in cast metal.
+      const { position, normal } = geometry.attributes;
+      geometry.clearGroups();
+      let start = 0, materialIndex = 0;
+      for (let triangle = 0; triangle < position.count; triangle += 3) {
+        const cut = normal.getX(triangle) > .999 && Math.abs(position.getX(triangle)) < .002;
+        const nextMaterial = cut ? 2 : 0;
+        if (nextMaterial === materialIndex) continue;
+        if (triangle > start) geometry.addGroup(start, triangle - start, materialIndex);
+        start = triangle;
+        materialIndex = nextMaterial;
+      }
+      geometry.addGroup(start, position.count - start, materialIndex);
+    }
+    mesh(caliper, geometry, [materials.cast, materials.cast, materials.cut]);
+  }
+  caliperWeb(webPoints,.013,bridgeBack-.006);
+  if(settings.caliperType==='fixed')caliperWeb(webPoints,.013,bridgeFront-.006);
   const crown = [[-.043,bridgeOuter-.019],[-.026,bridgeOuter-.005],[.026,bridgeOuter-.005],[.043,bridgeOuter-.019],[.030,bridgeOuter-.024],[-.030,bridgeOuter-.024]];
-  mesh(caliper,extrudedPolygon(section?clipLeft(crown):crown,.009,bridgeFront-.002),materials.cast);
+  caliperWeb(crown,.009,bridgeFront-.002);
   for (const x of section?[-.030]:[-.030,.030]) {
     ring(caliper,.0032,.008,-.008,.001,materials.cast,{x,y:bridgeOuter-.016,z:bridgeFront+.006},0,TAU,24);
     bolt(caliper,x,bridgeOuter-.016,bridgeFront-.001,.016,.0049);
@@ -508,7 +531,7 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   const hose=makePart('hose',[-.086,.222,-.053],[0,.14,.015]);
   const hoseEnd=new THREE.Vector3(-.012,bridgeOuter-.006,-T/2-.043);
   const hoseCurve=new THREE.CatmullRomCurve3([new THREE.Vector3(hcuCenter.x+.039,hcuCenter.y+.018,hcuCenter.z),new THREE.Vector3(-.159,.223,-.069),new THREE.Vector3(-.043,.253,-.073),hoseEnd]);
-  const hoseMesh=mesh(hose,new THREE.TubeGeometry(hoseCurve,40,.0038,8,false),materials.black);
+  const hoseMesh=mesh(hose,new THREE.TubeGeometry(hoseCurve,40,.0038,8,false),materials.hose);
   for(const endpoint of [new THREE.Vector3(hcuCenter.x+.039,hcuCenter.y+.018,hcuCenter.z),hoseEnd])ring(hose,0,.0062,-.008,.008,materials.steel,{x:endpoint.x,y:endpoint.y,z:endpoint.z},0,TAU,6);
   const bleeder=makePart('bleeder',[.022,padR+.035,-T/2-.043],[.08,.09,-.02]);
   ring(bleeder,0,.0042,-.010,.010,materials.steel,{x:.022,y:padR+.034,z:-T/2-.040},0,TAU,6);
@@ -572,9 +595,18 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     if(!hoseMesh.userData.originalPositions)hoseMesh.userData.originalPositions=positions.array.slice();
     for(let i=0;i<positions.count;i++)positions.setZ(i,hoseMesh.userData.originalPositions[i*3+2]-(settings.caliperType==='floating'?travel:0)*clamp((uv.getX(i)-.72)/.28,0,1));
     positions.needsUpdate=true;hoseMesh.geometry.computeBoundingSphere();
-    materials.inlet.emissive.setHex(snapshot.inletOpen===false?0x000000:0x1c7770);materials.inlet.emissiveIntensity=snapshot.inletOpen===false?0:.30;
-    materials.outlet.emissive.setHex(snapshot.outletOpen?0xa23b40:0x000000);materials.outlet.emissiveIntensity=snapshot.outletOpen?.50:0;
-    materials.pump.emissive.setHex(snapshot.pumpActive?0x4271a2:0x000000);materials.pump.emissiveIntensity=snapshot.pumpActive?.30:0;
+    const hydraulicActivity = lastPressure > 0 ? .28 + activity * .42 : 0;
+    const hydraulicColor = snapshot.outletOpen ? 0xffa153 : 0x55ddc5;
+    materials.hose.emissive.setHex(hydraulicColor);
+    materials.hose.emissiveIntensity = hydraulicActivity;
+    materials.fluid.emissive.copy(materials.hose.emissive);
+    materials.fluid.emissiveIntensity = hydraulicActivity;
+    materials.inlet.emissive.setHex(0x55ddc5);
+    materials.inlet.emissiveIntensity = snapshot.inletOpen ? hydraulicActivity : 0;
+    materials.outlet.emissive.setHex(0xffa153);
+    materials.outlet.emissiveIntensity = snapshot.outletOpen ? .65 : 0;
+    materials.pump.emissive.copy(materials.outlet.emissive);
+    materials.pump.emissiveIntensity = snapshot.pumpActive ? .48 : 0;
     for(const valve of valveNodes){const open=valve.index?snapshot.outletOpen===true:snapshot.inletOpen!==false,lift=open?valve.openLift:0;valve.plunger.position.z=lift;valve.spring.position.z=.018+lift;valve.spring.scale.z=(.014-lift)/.014;}
     group.updateMatrixWorld(true);
   };
@@ -597,10 +629,50 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   return {group,components,settings,view,update,getComponents,getDiagnostics,dispose};
 }
 
+function createBrakeStage(background) {
+  function radialMap(radius, stops) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const context = canvas.getContext('2d');
+    const center = canvas.width / 2;
+    const gradient = context.createRadialGradient(center, center, 0, center, center, radius * center);
+    for (const [stop, color] of stops) gradient.addColorStop(stop, color);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  const stage = new THREE.Group();
+  const groundGeometry = new THREE.PlaneGeometry(14, 14);
+  const contactGeometry = new THREE.PlaneGeometry(.99, .76);
+  const groundMap = radialMap(.40, [[0, '#3a4c57'], [.38, '#2c3d49'], [1, background.getStyle()]]);
+  const contactMap = radialMap(1, [[0, '#080f17bc'], [.48, '#080f1799'], [.76, '#080f1740'], [1, '#080f1700']]);
+  const groundMaterial = new THREE.MeshBasicMaterial({ map: groundMap, toneMapped: false });
+  const contactMaterial = new THREE.MeshBasicMaterial({ map: contactMap, transparent: true, depthWrite: false, toneMapped: false });
+  const shadowMaterial = new THREE.ShadowMaterial({ color: 0x050b12, opacity: .27, depthWrite: false, toneMapped: false });
+  const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+  const contact = new THREE.Mesh(contactGeometry, contactMaterial);
+  const castShadow = new THREE.Mesh(groundGeometry, shadowMaterial);
+  for (const mesh of [ground, contact, castShadow]) {
+    mesh.rotation.x = -Math.PI / 2;
+    stage.add(mesh);
+  }
+  contact.position.y = .0002;
+  contact.renderOrder = 1;
+  castShadow.position.y = .0004;
+  castShadow.receiveShadow = true;
+  castShadow.renderOrder = 2;
+  return { stage, contact, dispose() {
+    for (const resource of [groundGeometry, contactGeometry, groundMaterial, contactMaterial, shadowMaterial, groundMap, contactMap]) resource.dispose();
+  } };
+}
+
 export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   if(!host?.appendChild)throw new TypeError('A scene host element is required');
   host.classList.add('brake-scene');
-  const scene=new THREE.Scene();scene.background=new THREE.Color(0x1c2934);scene.fog=new THREE.Fog(scene.background,1.1,3.5);
+  const scene=new THREE.Scene();scene.background=new THREE.Color(0x1c2934);scene.fog=new THREE.Fog(scene.background,1.15,3.5);
   const camera=new THREE.PerspectiveCamera(38,1,.005,12);
   const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'});
   renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.94;
@@ -610,8 +682,7 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   const key=new THREE.DirectionalLight(0xfff5e9,2.25);key.position.set(-.38,.70,.39);key.castShadow=true;key.shadow.mapSize.set(1024,1024);key.shadow.camera.left=key.shadow.camera.bottom=-.62;key.shadow.camera.right=key.shadow.camera.top=.62;key.shadow.camera.near=.1;key.shadow.camera.far=3;key.shadow.normalBias=.0008;scene.add(key);
   const fill=new THREE.DirectionalLight(0xdbe9f6,.78);fill.position.set(.41,.16,.62);scene.add(fill);
   const rim=new THREE.DirectionalLight(0xc6dbea,1.42);rim.position.set(.15,.39,-.68);scene.add(rim);
-  const floorGeometry=new THREE.PlaneGeometry(14,14),floorMaterial=new THREE.MeshStandardMaterial({color:0x151e28,metalness:.08,roughness:.95});
-  const floor=new THREE.Mesh(floorGeometry,floorMaterial);floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+  const stage=createBrakeStage(scene.background);
   const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.12;controls.minDistance=.06;controls.maxDistance=2.6;controls.target.set(-.033,.035,0);
   const labels=document.createElement('div');labels.className='brake-scene-labels';host.appendChild(labels);
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.classList.add('brake-scene-leaders');svg.setAttribute('aria-hidden','true');host.appendChild(svg);
@@ -623,8 +694,9 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   let settings={},snapshot={},view=normalizeView(),assembly=createBrakeAssembly(settings,view),disposed=false,width=1,height=1,raf=0,dirty=true,buildCount=1,renderCount=0,dragStart=null,signature='',selectionHighlight=null,highlightedId=null,autoFraming=true,needsFit=true,framing=null;
   let inspection=null;
   let fixtureRadius=assembly.settings.discOuterRadius,fixture=createDynoFixture(fixtureRadius);
-  floor.position.y=fixture.floorY;
-  scene.add(fixture.group,assembly.group);
+  stage.contact.position.x=fixture.deckX;
+  stage.contact.position.z=fixture.deckZ;
+  scene.add(stage.stage,fixture.group,assembly.group);
   const geometrySignature=()=>JSON.stringify([normalizeGeometrySettings(settings),view.mode==='cutaway',view.mode==='cutaway'?Math.round(view.cutaway*100)/100:0]);
   signature=geometrySignature();
   const cameras={isometric:[.45,.25,.73],front:[0,0,1],rear:[-.12,.14,-1],side:[1,.15,.015],top:[.01,1,.06]};
@@ -632,9 +704,11 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   function setCamera(name='isometric'){view.camera=cameras[name]?name:'isometric';autoFraming=true;frameSubject();needsFit=false;}
   function updateFixture() {
     const radius=assembly.settings.discOuterRadius;
-    if(radius!==fixtureRadius){scene.remove(fixture.group);fixture.dispose();fixture=createDynoFixture(radius);scene.add(fixture.group);fixtureRadius=radius;floor.position.y=fixture.floorY;}
+    if(radius!==fixtureRadius){scene.remove(fixture.group);fixture.dispose();fixture=createDynoFixture(radius);scene.add(fixture.group);fixtureRadius=radius;}
     fixture.group.visible=!inspection&&view.mode!=='exploded';
-    floor.visible=!inspection;
+    stage.stage.position.y=fixture.floorY;
+    stage.stage.visible=!inspection;
+    stage.contact.visible=fixture.group.visible;
   }
   function applyInspection(){
     if(!inspection)return;
@@ -676,9 +750,10 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   function updateLabels(){
     labels.hidden=!view.labels;svg.style.display=view.labels?'':'none';if(!view.labels)return;
     svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
-    const priority=['rotor','caliper','pads','pistons','hub','bearing','hydraulic-unit','sensor','seals','boots','slide-pins','hose','valves','pump','encoder','bleeder','bracket','pad-hardware','knuckle'];
-    if(view.selectedPart){const index=priority.indexOf(view.selectedPart);if(index>=0)priority.splice(index,1);priority.unshift(view.selectedPart);}
-    const max=width<480?6:8,candidates=[];
+    const compact=width<=COMPACT_SCENE_WIDTH;
+    const priority=LABEL_PRIORITY.filter(id=>id!==view.selectedPart);
+    if(view.selectedPart)priority.unshift(view.selectedPart);
+    const max=compact?3:8,candidates=[];
     for(const [id,entry] of labelNodes){
       const vector=entry.part.anchor.getWorldPosition(new THREE.Vector3()).project(camera),selected=view.selectedPart===id;
       const eligible=entry.part.node.visible&&vector.z>-1&&vector.z<1&&priority.indexOf(id)<max;
@@ -686,12 +761,13 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
       const x=(vector.x*.5+.5)*width,y=(-vector.y*.5+.5)*height;
       candidates.push({...entry,id,x,y,selected,priority:priority.indexOf(id)});
     }
-    const top=instruments.element.offsetTop+instruments.element.offsetHeight+16;
-    const bottom=Math.min(note.offsetTop,rangeNote.hidden||rangeNote.offsetTop<top?height:rangeNote.offsetTop)-16;
+    const spacing=compact?22:16;
+    const top=instruments.element.offsetTop+instruments.element.offsetHeight+spacing;
+    const bottom=Math.min(note.offsetTop,rangeNote.hidden||rangeNote.offsetTop<top?height:rangeNote.offsetTop)-spacing;
     const placements=layoutBrakeLabels(candidates,width,height,{top,bottom}),retained=new Set(placements.map(entry=>entry.id));
     for(const entry of candidates)if(!retained.has(entry.id)){entry.button.hidden=true;entry.line.style.display='none';}
     for(const entry of placements){
-      entry.button.style.width=`${entry.width}px`;entry.button.style.left=`${entry.left}px`;entry.button.style.top=`${entry.top}px`;
+      entry.button.style.width=`${entry.width}px`;entry.button.style.height=`${entry.height}px`;entry.button.style.left=`${entry.left}px`;entry.button.style.top=`${entry.top}px`;
       entry.line.setAttribute('points',`${entry.anchorX},${entry.anchorY} ${entry.kneeX},${entry.y} ${entry.edgeX},${entry.y}`);entry.line.classList.toggle('selected',entry.selected);
     }
     labels.dataset.visibleCount=String(placements.length);
@@ -704,11 +780,30 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   function resize(){if(disposed)return;width=Math.max(1,host.clientWidth);height=Math.max(1,host.clientHeight);camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height,false);if(autoFraming)frameSubject();dirty=true;}
   function focus(id){const part=assembly.components.get(id);if(!part?.structuralVisible)return false;view.selectedPart=id;updateSelection();dirty=true;return true;}
   function render(){if(disposed)return;const changed=controls.update();if(dirty||changed){renderer.render(scene,camera);updateLabels();renderCount++;dirty=false;}raf=requestAnimationFrame(render);}
-  function pointerDown(event){dragStart={x:event.clientX,y:event.clientY};}
-  function pointerUp(event){if(!dragStart||Math.hypot(event.clientX-dragStart.x,event.clientY-dragStart.y)>5){dragStart=null;return;}dragStart=null;const rect=renderer.domElement.getBoundingClientRect();pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);raycaster.setFromCamera(pointer,camera);const hit=raycaster.intersectObject(assembly.group,true).find(value=>{for(let node=value.object;node;node=node.parent)if(!node.visible)return false;return value.object.isMesh;});if(!hit)return;let node=hit.object;while(node&&!node.userData.componentId)node=node.parent;if(node?.userData.componentId)select(node.userData.componentId);}
-  renderer.domElement.addEventListener('pointerdown',pointerDown);renderer.domElement.addEventListener('pointerup',pointerUp);
+  function pointerDown(event){
+    dragStart=event.isPrimary&&event.button===0?{id:event.pointerId,x:event.clientX,y:event.clientY}:null;
+  }
+  function pointerMove(event){
+    if(dragStart?.id===event.pointerId&&Math.hypot(event.clientX-dragStart.x,event.clientY-dragStart.y)>6)dragStart=null;
+  }
+  function pointerCancel(){dragStart=null;}
+  function pointerUp(event){
+    pointerMove(event);
+    if(dragStart?.id!==event.pointerId)return;
+    dragStart=null;
+    const rect=renderer.domElement.getBoundingClientRect();
+    pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);
+    raycaster.setFromCamera(pointer,camera);
+    const hit=raycaster.intersectObject(assembly.group,true).find(value=>{for(let node=value.object;node;node=node.parent)if(!node.visible)return false;return value.object.isMesh;});
+    if(!hit)return;
+    let node=hit.object;
+    while(node&&!node.userData.componentId)node=node.parent;
+    if(node?.userData.componentId)select(node.userData.componentId);
+  }
+  const pointerHandlers={pointerdown:pointerDown,pointermove:pointerMove,pointerup:pointerUp,pointercancel:pointerCancel};
+  for(const [event,handler] of Object.entries(pointerHandlers))renderer.domElement.addEventListener(event,handler);
   const observer=typeof ResizeObserver==='function'?new ResizeObserver(resize):null;observer?.observe(host);
   controls.addEventListener('change',()=>{dirty=true;});controls.addEventListener('start',()=>{autoFraming=false;});syncLabels();applyQuality();resize();setCamera(view.camera);setState();render();
-  const dispose=()=>{if(disposed)return;disposed=true;cancelAnimationFrame(raf);observer?.disconnect();renderer.domElement.removeEventListener('pointerdown',pointerDown);renderer.domElement.removeEventListener('pointerup',pointerUp);controls.dispose();selectionHighlight?.dispose();assembly.dispose();fixture.dispose();floorGeometry.dispose();floorMaterial.dispose();environment.dispose();key.shadow.map?.dispose();renderer.dispose();renderer.forceContextLoss();for(const element of [renderer.domElement,labels,svg,note,instruments.element,rangeNote])element.remove();};
+  const dispose=()=>{if(disposed)return;disposed=true;cancelAnimationFrame(raf);observer?.disconnect();for(const [event,handler] of Object.entries(pointerHandlers))renderer.domElement.removeEventListener(event,handler);controls.dispose();selectionHighlight?.dispose();assembly.dispose();fixture.dispose();stage.dispose();environment.dispose();key.shadow.map?.dispose();renderer.dispose();renderer.forceContextLoss();for(const element of [renderer.domElement,labels,svg,note,instruments.element,rangeNote])element.remove();};
   return {setState,setView,resize,dispose,focus,setCamera,inspectPart,restoreInspection,getComponents:()=>assembly.getComponents(),getDiagnostics:()=>({...assembly.getDiagnostics(),disposed,buildCount,renderCount,canvas:{width,height,pixelRatio:renderer.getPixelRatio()},camera:view.camera,cameraPose:{position:camera.position.toArray(),target:controls.target.toArray()},autoFraming,selectedPart:view.selectedPart,inspection:{active:!!inspection,partId:inspection?.partId??null},selection:{style:selectionHighlight?.style??'none',box:false},framing:framing?{distance:framing.distance,subjectFill:framing.subjectFill}:null,labels:{enabled:!!view.labels,visible:Number(labels.dataset.visibleCount??0)},renderer:{calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures},webgl2:true})};
 }
