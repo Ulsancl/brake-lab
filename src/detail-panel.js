@@ -1,4 +1,7 @@
 import { describeBrakeDetail } from './detail-readouts.js';
+import { createKinematicsChart } from './kinematics-chart.js';
+
+let kinematicsChart;
 
 const format = (value, digits = 1) => Number.isFinite(value)
   ? value.toLocaleString('ko-KR', { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -24,6 +27,8 @@ function renderFacts(list, facts) {
 }
 
 export function renderBrakeDetails(partId, snapshot, settings, inspection) {
+  kinematicsChart ??= createKinematicsChart(document.getElementById('force-readout'));
+  kinematicsChart.render(snapshot, settings);
   const detail = describeBrakeDetail(partId, snapshot, settings);
   for (const prefix of ['part', 'focus']) {
     renderFacts(document.querySelector(`#${prefix}-detail-facts`), detail.facts);

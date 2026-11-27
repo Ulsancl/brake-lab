@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ENCODER_TEETH, hubBearingKinematics } from './mechanical-detail.js';
+import { createRigInstruments, rotorHeatRatio } from './scene-instruments.js';
+import { createDynoFixture } from './scene-rig.js';
 
 const TAU = Math.PI * 2;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -101,8 +103,9 @@ function normalizeView(view = {}) {
   return { ...DEFAULT_VIEW, ...view, mode: ['assembled', 'cutaway', 'exploded'].includes(view.mode) ? view.mode : DEFAULT_VIEW.mode, camera:['isometric','front','rear','side','top'].includes(view.camera)?view.camera:DEFAULT_VIEW.camera,cutaway: clamp(finite(view.cutaway, .65), 0, 1), explode: clamp(finite(view.explode, .5), 0, 1) };
 }
 
-export function layoutBrakeLabels(candidates, width, height) {
-  const labelWidth=Math.min(width<480?108:126,width*.28),top=62,bottom=Math.max(top,height-58),separation=30;
+export function layoutBrakeLabels(candidates, width, height, { top = 62, bottom = height - 58 } = {}) {
+  const labelWidth=Math.min(width<480?108:126,width*.28),separation=30;
+  bottom=Math.max(top,bottom);
   const capacity=Math.max(1,Math.floor((bottom-top)/separation)+1),columns=[[],[]],placements=[];
   for(const candidate of candidates)columns[candidate.x<width*.48?0:1].push(candidate);
   for(const [side,entries] of columns.entries()){
@@ -164,14 +167,14 @@ export function createAnnularGeometry(inner, outer, back, front, start = 0, leng
   return geometry;
 }
 
-function latheShell(profile, start = 0, length = TAU, segments = 64) {
+function latheShell(profile, start = 0, length = TAU, segments = 64, faceMaterials = []) {
   const builder = triangleBuilder(), count = Math.max(4, Math.ceil(segments * length / TAU));
   const point = ([radius, z], angle) => new THREE.Vector3(radius * Math.cos(angle), radius * Math.sin(angle), z);
   for (let p = 0; p < profile.length; p++) {
     const next = (p + 1) % profile.length;
     for (let i = 0; i < count; i++) {
       const a = start + length * i / count, b = start + length * (i + 1) / count;
-      builder.quad(point(profile[p],a),point(profile[p],b),point(profile[next],b),point(profile[next],a));
+      builder.quad(point(profile[p],a),point(profile[p],b),point(profile[next],b),point(profile[next],a),faceMaterials[p]??0);
     }
   }
   if (length < TAU - 1e-8) {
@@ -186,10 +189,39 @@ function latheShell(profile, start = 0, length = TAU, segments = 64) {
   const geometry = builder.finish(); geometry.userData = { kind: 'closed-profile-shell', cutFaces: length < TAU - 1e-8 ? 2 : 0 }; return geometry;
 }
 
-function extrudedPolygon(points, depth, z, holes = []) {
+function smoothCircumference(geometry) {
+  const { position, normal } = geometry.attributes;
+  // Preserve the axial profile and cut faces while removing radial faceting.
+  for (const group of geometry.groups) {
+    if (group.materialIndex === 2) continue;
+    for (let i = group.start; i < group.start + group.count; i++) {
+      const x = position.getX(i), y = position.getY(i), radius = Math.hypot(x, y);
+      const outward = Math.sign(normal.getX(i) * x + normal.getY(i) * y);
+      const radial = Math.hypot(normal.getX(i), normal.getY(i)) * outward;
+      if (radius > 0) normal.setXYZ(i, radial * x / radius, radial * y / radius, normal.getZ(i));
+    }
+  }
+}
+
+function rotorPlate(inner, outer, back, front, start, length) {
+  const bevel = Math.min(.0013, (front - back) * .28);
+  const profile = [
+    [inner + bevel, back], [outer - bevel, back], [outer, back + bevel], [outer, front - bevel],
+    [outer - bevel, front], [inner + bevel, front], [inner, front - bevel], [inner, back + bevel]
+  ];
+  const geometry = latheShell(profile, start, length, 128, [1, 0, 0, 0, 1]);
+  smoothCircumference(geometry);
+  const { position, uv } = geometry.attributes;
+  for (let i = 0; i < position.count; i++) {
+    uv.setXY(i, position.getX(i) / (outer * 2) + .5, position.getY(i) / (outer * 2) + .5);
+  }
+  return geometry;
+}
+
+function extrudedPolygon(points, depth, z, holes = [], bevel = Math.min(.0013, depth / 5)) {
   const shape = new THREE.Shape(points.map(([x,y]) => new THREE.Vector2(x,y)));
   for (const [x,y,radius] of holes) { const hole = new THREE.Path(); hole.absarc(x,y,radius,0,TAU,true); shape.holes.push(hole); }
-  const geometry = new THREE.ExtrudeGeometry(shape,{depth,bevelEnabled:true,bevelSegments:2,steps:1,bevelSize:Math.min(.0013,depth/5),bevelThickness:Math.min(.0013,depth/5),curveSegments:32});
+  const geometry = new THREE.ExtrudeGeometry(shape,{depth,bevelEnabled:bevel>0,bevelSegments:2,steps:1,bevelSize:bevel,bevelThickness:bevel,curveSegments:32});
   geometry.translate(0,0,z); geometry.userData.kind = 'machined-extrusion'; return geometry;
 }
 
@@ -206,32 +238,45 @@ function clipLeft(points) {
 function castNoise() {
   const data = new Uint8Array(64 * 64 * 4); let seed = 310;
   for (let i = 0; i < data.length; i += 4) { seed = (Math.imul(seed,1664525)+1013904223) >>> 0; const value = 110+(seed>>>24)%80; data[i]=data[i+1]=data[i+2]=value; data[i+3]=255; }
-  const texture = new THREE.DataTexture(data,64,64); texture.wrapS=texture.wrapT=THREE.RepeatWrapping; texture.repeat.set(7,7); texture.needsUpdate=true; return texture;
+  const texture = new THREE.DataTexture(data,64,64);
+  texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(7,7);
+  texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearMipmapLinearFilter;texture.generateMipmaps=true;texture.needsUpdate=true;
+  return texture;
 }
 
-function machinedRings() {
+function machinedRings(albedo = false) {
   const size=512,data=new Uint8Array(size*size*4),center=(size-1)/2;
-  // Both radial frequencies stay below pi radians per texel. The old 17
-  // rad/texel signal aliased into coarse irregular patterns on turned faces.
-  for(let y=0;y<size;y++)for(let x=0;x<size;x++){const i=(y*size+x)*4,r=Math.hypot(x-center,y-center),value=Math.round(155+18*Math.sin(r*1.45)+5*Math.sin(r*2.67));data[i]=data[i+1]=data[i+2]=value;data[i+3]=255;}
-  const texture=new THREE.DataTexture(data,size,size);texture.anisotropy=8;texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearMipmapLinearFilter;texture.generateMipmaps=true;texture.needsUpdate=true;return texture;
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
+    const i=(y*size+x)*4,r=Math.hypot(x-center,y-center);
+    // Combine fine lathe marks and broader wear bands below the texel Nyquist limit.
+    const marks=30*Math.sin(r*1.45)+7*Math.sin(r*2.67)+18*Math.sin(r*.23)+10*Math.sin(r*.093);
+    const value=Math.round(albedo ? 210 + .34 * marks : 173 + marks);
+    data[i]=data[i+1]=data[i+2]=value;data[i+3]=255;
+  }
+  const texture=new THREE.DataTexture(data,size,size);
+  if(albedo)texture.colorSpace=THREE.SRGBColorSpace;
+  texture.anisotropy=8;texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearMipmapLinearFilter;texture.generateMipmaps=true;texture.needsUpdate=true;return texture;
 }
 
 export function createBrakeAssembly(input = {}, initialView = {}) {
   const settings = normalizeGeometrySettings(input), view = normalizeView(initialView), resources = { geometries:new Set(),materials:new Set(),textures:new Set(),instances:new Set() };
   const group = new THREE.Group(); group.name='generic-brake-assembly';
-  const noise=castNoise(), rings=machinedRings(); resources.textures.add(noise);resources.textures.add(rings);
-  const material = options => { const value = new THREE.MeshStandardMaterial(options);resources.materials.add(value);return value; };
+  const noise=castNoise(), rings=machinedRings(), ringAlbedo=machinedRings(true);
+  for (const texture of [noise,rings,ringAlbedo]) resources.textures.add(texture);
+  const material = options => { const value = new THREE.MeshStandardMaterial({fog:false,...options});resources.materials.add(value);return value; };
+  const coldFace = new THREE.Color(0xbdc9cf), hotFace = new THREE.Color(0xb58254);
   const materials = {
     iron:material({color:0x56616a,metalness:.88,roughness:.48,bumpMap:noise,bumpScale:.00038}),
-    steel:material({color:0x9caeb9,metalness:.98,roughness:.22}),
+    steel:material({color:0xa8b8bf,metalness:.94,roughness:.26}),
+    fastener:material({color:0x89979d,metalness:.92,roughness:.32}),
     machined:material({color:0xabb8bf,metalness:.98,roughness:.25,bumpMap:rings,bumpScale:.00011}),
-    cast:material({color:settings.caliperType==='floating'?0x465459:0x849ca5,metalness:.67,roughness:.64,bumpMap:noise,bumpScale:.00055,roughnessMap:noise}),
+    rotorFace:material({color:coldFace,metalness:.88,roughness:.57,map:ringAlbedo,roughnessMap:rings,bumpMap:rings,bumpScale:.00013}),
+    cast:material({color:settings.caliperType==='floating'?0x546c78:0x7c858b,metalness:.65,roughness:.72,bumpMap:noise,bumpScale:.00045,roughnessMap:noise}),
     structural:material({color:0x3b4c56,metalness:.61,roughness:.60,bumpMap:noise,bumpScale:.00045}),
     aluminum:material({color:0x91a2ac,metalness:.86,roughness:.36,bumpMap:noise,bumpScale:.00025}),
     black:material({color:0x182229,metalness:.08,roughness:.94}),
     friction:material({color:0x454a48,metalness:.12,roughness:.91,bumpMap:noise,bumpScale:.00018}),
-    cut:material({color:0xc86945,metalness:.45,roughness:.56}),
+    cut:material({color:0xce976e,metalness:.32,roughness:.58}),
     copper:material({color:0xa96b42,metalness:.83,roughness:.33}),
     fluid:material({color:0xdbac51,metalness:.15,roughness:.34,transparent:true,opacity:.65}),
     sensor:material({color:0x293d49,metalness:.08,roughness:.72}),
@@ -266,24 +311,37 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   };
   const bolt = (parent,x,y,z,length=.016,radius=.0045) => {
     ring(parent,0,radius*.64,-length/2,length/2,materials.steel,{x,y,z},0,TAU,16);
-    const geometry=new THREE.CylinderGeometry(radius,radius,.005,6);geometry.rotateX(Math.PI/2);mesh(parent,geometry,materials.steel,{x,y,z:z+length/2});
+    const headZ=z+length/2;
+    ring(parent,radius*.60,radius*1.18,-.0020,-.0004,materials.fastener,{x,y,z:headZ},0,TAU,20);
+    const geometry=latheShell([[0,-.0005],[radius,-.0005],[radius,.0031],[.86*radius,.004],[0,.004]],0,TAU,6);
+    mesh(parent,geometry,materials.fastener,{x,y,z:headZ});
   };
   const section=view.mode==='cutaway'&&view.cutaway>0, extent=section?TAU-(.12+.30*view.cutaway)*TAU:TAU;
   const rotorStart=section?Math.PI/2+.10:0, shellStart=section?Math.PI/2:0, shellLength=section?Math.PI+(.5-view.cutaway)*.65:TAU;
   const R=settings.discOuterRadius, I=settings.discInnerRadius, T=settings.discThickness, padR=settings.padMeanRadius, scale=R/.18;
   const plate=Math.min(.0045,T*.24), ventGap=T-2*plate;
   const rotor=makePart('rotor',[R*.78,R*.35,T/2],[0,0,.11]); const rotorSpin=new THREE.Group();rotor.add(rotorSpin);spins.push(rotorSpin);
-  ring(rotorSpin,I,R,-T/2,-T/2+plate,[materials.iron,materials.machined,materials.cut],{},rotorStart,extent,96);
-  ring(rotorSpin,I,R,T/2-plate,T/2,[materials.iron,materials.machined,materials.cut],{},rotorStart,extent,96);
+  for (const back of [-T/2, T/2 - plate]) {
+    mesh(rotorSpin,rotorPlate(I,R,back,back+plate,rotorStart,extent),[materials.iron,materials.rotorFace,materials.cut]);
+  }
   let vaneCount=0;
   for(let i=0;i<36;i++) {
     const angle=rotorStart+TAU*(i+.5)/36;
-    if(angle+.014>rotorStart+extent)continue;
-    const vane=ring(rotorSpin,I+.003,R-.008,-T/2+plate,T/2-plate,materials.iron,{},angle-.013,.026,144);
+    const vaneEdge = (t, side) => {
+      const radius = THREE.MathUtils.lerp(I + .002, R - .004, t);
+      const azimuth = angle + .062 * (t - .5) + side * Math.min(.030, (.0013 + t * .0009) / radius);
+      return [Math.cos(azimuth) * radius, Math.sin(azimuth) * radius];
+    };
+    if (angle + .061 > rotorStart + extent) continue;
+    const steps = [0, .2, .4, .6, .8, 1];
+    const perimeter = [...steps.map(t => vaneEdge(t, -1)), ...steps.toReversed().map(t => vaneEdge(t, 1))];
+    const vane=mesh(rotorSpin,extrudedPolygon(perimeter,ventGap,-ventGap/2,[],0),materials.iron);
     vane.userData.role='ventilation-vane';vaneCount++;
   }
   const hatOuter=I+.008,hatInner=Math.max(.022,I*.55),hatHeight=.037;
-  mesh(rotorSpin,latheShell([[hatInner,T/2],[hatOuter,T/2-plate],[hatOuter,T/2],[hatInner+.007,hatHeight],[hatInner,hatHeight]],rotorStart,extent),materials.iron);
+  const hat=latheShell([[hatInner,T/2],[hatOuter,T/2-plate],[hatOuter,T/2],[hatInner+.009,hatHeight-.002],[hatInner+.007,hatHeight],[hatInner,hatHeight]],rotorStart,extent,96,[0,0,0,0,1]);
+  smoothCircumference(hat);
+  mesh(rotorSpin,hat,[materials.iron,materials.steel,materials.cut]);
 
   const hub=makePart('hub',[.028,-.025,.060],[0,0,.21]);const hubSpin=new THREE.Group();hub.add(hubSpin);spins.push(hubSpin);
   const hubStem=Math.min(.024,hatInner*.8),hubFlange=Math.min(.052,hatOuter-.003);
@@ -341,6 +399,12 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   const webPoints=[[-.061,bridgeOuter-.024],[-.041,bridgeOuter+.002],[.041,bridgeOuter+.002],[.061,bridgeOuter-.024],[.043,bridgeInner],[-.043,bridgeInner]];
   mesh(caliper,extrudedPolygon(section?clipLeft(webPoints):webPoints,.013,bridgeBack-.006),materials.cast);
   if(settings.caliperType==='fixed')mesh(caliper,extrudedPolygon(section?clipLeft(webPoints):webPoints,.013,bridgeFront-.006),materials.cast);
+  const crown = [[-.043,bridgeOuter-.019],[-.026,bridgeOuter-.005],[.026,bridgeOuter-.005],[.043,bridgeOuter-.019],[.030,bridgeOuter-.024],[-.030,bridgeOuter-.024]];
+  mesh(caliper,extrudedPolygon(section?clipLeft(crown):crown,.009,bridgeFront-.002),materials.cast);
+  for (const x of section?[-.030]:[-.030,.030]) {
+    ring(caliper,.0032,.008,-.008,.001,materials.cast,{x,y:bridgeOuter-.016,z:bridgeFront+.006},0,TAU,24);
+    bolt(caliper,x,bridgeOuter-.016,bridgeFront-.001,.016,.0049);
+  }
   for(const x of section?[-.040]:[-.040,.040]){
     const rib=[[-.004,padR+.025],[.004,padR+.025],[.006,bridgeOuter-.009],[-.006,bridgeOuter-.003]];
     mesh(caliper,extrudedPolygon(rib,.004,bridgeBack-.010),materials.cast,{x});
@@ -353,10 +417,18 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
   for(const x of [-.062,.062])bolt(bracket,x,padR-.033,-T/2-.047,.038,.007);
   const hardware=makePart('pad-hardware',[.046,padR+.041,T/2+.021],[0,.11,.025]);
   if(settings.caliperType==='fixed')for(const y of [padInner+.006,padOuter-.006]){
-    ring(hardware,0,.0026,-T/2-.041,T/2+.041,materials.steel,{x:-.040,y},0,TAU,16);
-    ring(hardware,0,.0026,-T/2-.041,T/2+.041,materials.steel,{x:.040,y},0,TAU,16);
+    for (const x of [-.040,.040]) {
+      ring(hardware,0,.0026,-T/2-.041,T/2+.041,materials.steel,{x,y},0,TAU,16);
+      ring(hardware,0,.004,T/2+.038,T/2+.042,materials.fastener,{x,y},0,TAU,20);
+    }
   }
-  else for(const x of [-.055,.055])mesh(hardware,extrudedPolygon([[x-.007,padR+.006],[x-.006,padR+.033],[x+.005,padR+.039],[x+.007,padR+.028],[x-.003,padR+.025],[x-.003,padR+.007]],.0011,-T/2-.014),materials.steel);
+  else {
+    for(const x of [-.055,.055])mesh(hardware,extrudedPolygon([[x-.007,padR+.006],[x-.006,padR+.033],[x+.005,padR+.039],[x+.007,padR+.028],[x-.003,padR+.025],[x-.003,padR+.007]],.0011,-T/2-.014),materials.steel);
+    const clipZ = T/2 + gap + frictionDepth + backing + .0015;
+    const clipPath = [[-.054,padOuter-.018],[-.045,padOuter-.009],[-.029,padOuter-.006],[-.018,padOuter-.012],[.018,padOuter-.012],[.029,padOuter-.006],[.045,padOuter-.009],[.054,padOuter-.018]];
+    const spring = new THREE.CatmullRomCurve3(clipPath.map(([x,y])=>new THREE.Vector3(x,y,clipZ)));
+    mesh(hardware,new THREE.TubeGeometry(spring,32,.0018,8,false),materials.steel);
+  }
   const pinPart=makePart('slide-pins',[.064,padR+.023,-.038],[.10,.07,-.05]);pinPart.visible=settings.caliperType==='floating';
   if(pinPart.visible)for(const x of [-.064,.064]){
     ring(pinPart,0,.0052,-T/2-.067,T/2+.008,materials.machined,{x,y:padR+.022},0,TAU,24);
@@ -384,12 +456,8 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     for(let i=1;i<=20;i++){const axial=-span+2*span*i/20;profile.push([track(axial),axial]);}
     profile.push([shoulder,half-edge],[shoulder+sign*edge,half],[backRadius-sign*edge,half],[backRadius,half-edge],[backRadius,-half+edge],[backRadius-sign*edge,-half]);
     if(outer)profile.reverse();
-    const geometry=latheShell(profile,shellStart,shellLength,128),p=geometry.attributes.position,n=geometry.attributes.normal;
-    // Smooth only circumferential normals; profile edges and cut faces stay crisp.
-    for(const group of geometry.groups)if(group.materialIndex!==2)for(let i=group.start;i<group.start+group.count;i++){
-      const radius=Math.hypot(p.getX(i),p.getY(i)),radial=Math.hypot(n.getX(i),n.getY(i))*Math.sign(n.getX(i)*p.getX(i)+n.getY(i)*p.getY(i));
-      if(radius>0)n.setXYZ(i,radial*p.getX(i)/radius,radial*p.getY(i)/radius,n.getZ(i));
-    }
+    const geometry=latheShell(profile,shellStart,shellLength,128);
+    smoothCircumference(geometry);
     geometry.userData.role=outer?'bearing-outer-race':'bearing-inner-race';geometry.userData.grooveRadius=groove;geometry.userData.contactRadius=bearingPitch+sign*bearingBallRadius;
     const node=mesh(bearing,geometry,materials.bearing,{z});node.userData.role=geometry.userData.role;return node;
   };
@@ -472,6 +540,9 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
     const exploded=currentView.mode==='exploded'?currentView.explode:0;
     for(const part of components.values())part.node.position.copy(part.explode).multiplyScalar(exploded);
     lastWheelAngle=finite(snapshot.wheelAngle,lastWheelAngle);lastPressure=Math.max(0,finite(snapshot.pressure,0));
+    const heat = rotorHeatRatio(snapshot.discTemperatureC);
+    materials.rotorFace.color.copy(coldFace).lerp(hotFace, heat);
+    materials.rotorFace.metalness = .88 - heat * .16;
     for(const spin of spins)spin.rotation.z=lastWheelAngle;
     const bearingMotion=hubBearingKinematics({wheelAngle:lastWheelAngle,wheelOmega:finite(snapshot.wheelOmega,0)}),instanceMatrix=new THREE.Matrix4();
     const retained=(angle,radius)=>!section||((angle-shellStart)%TAU+TAU)%TAU>=Math.asin(radius/bearingPitch)&&((angle-shellStart)%TAU+TAU)%TAU<=shellLength-Math.asin(radius/bearingPitch);
@@ -529,44 +600,53 @@ export function createBrakeAssembly(input = {}, initialView = {}) {
 export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   if(!host?.appendChild)throw new TypeError('A scene host element is required');
   host.classList.add('brake-scene');
-  const scene=new THREE.Scene();scene.background=new THREE.Color(0x17212b);
+  const scene=new THREE.Scene();scene.background=new THREE.Color(0x1c2934);scene.fog=new THREE.Fog(scene.background,1.1,3.5);
   const camera=new THREE.PerspectiveCamera(38,1,.005,12);
   const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'});
-  renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.98;
+  renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.94;
   renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.domElement.setAttribute('aria-label','브레이크와 ABS 조립 구조 3D 관찰');host.appendChild(renderer.domElement);
-  const pmrem=new THREE.PMREMGenerator(renderer),room=new RoomEnvironment(),environment=pmrem.fromScene(room,.035);scene.environment=environment.texture;scene.environmentIntensity=.90;room.dispose();pmrem.dispose();
-  const hemisphere=new THREE.HemisphereLight(0xc7d9e8,0x1d2a31,.50);scene.add(hemisphere);
-  const key=new THREE.DirectionalLight(0xffe9d0,2.2);key.position.set(-.25,.60,.65);key.castShadow=true;key.shadow.mapSize.set(1024,1024);key.shadow.camera.left=key.shadow.camera.bottom=-.8;key.shadow.camera.right=key.shadow.camera.top=.8;key.shadow.camera.near=.1;key.shadow.camera.far=3;key.shadow.normalBias=.0008;scene.add(key);
-  const fill=new THREE.DirectionalLight(0xa7c7df,.70);fill.position.set(.6,.18,-.45);scene.add(fill);
-  const floorGeometry=new THREE.CircleGeometry(.48,96),floorMaterial=new THREE.MeshStandardMaterial({color:0x182630,metalness:.15,roughness:.84});
-  const floor=new THREE.Mesh(floorGeometry,floorMaterial);floor.rotation.x=-Math.PI/2;floor.position.y=-.207;floor.receiveShadow=true;scene.add(floor);
-  const grid=new THREE.GridHelper(.85,17,0x314650,0x263841);grid.position.y=-.2065;grid.material.transparent=true;grid.material.opacity=.12;scene.add(grid);
+  const pmrem=new THREE.PMREMGenerator(renderer),room=new RoomEnvironment(),environment=pmrem.fromScene(room,.035);scene.environment=environment.texture;scene.environmentIntensity=1.06;room.dispose();pmrem.dispose();
+  const hemisphere=new THREE.HemisphereLight(0xdde9f2,0x60717e,.65);scene.add(hemisphere);
+  const key=new THREE.DirectionalLight(0xfff5e9,2.25);key.position.set(-.38,.70,.39);key.castShadow=true;key.shadow.mapSize.set(1024,1024);key.shadow.camera.left=key.shadow.camera.bottom=-.62;key.shadow.camera.right=key.shadow.camera.top=.62;key.shadow.camera.near=.1;key.shadow.camera.far=3;key.shadow.normalBias=.0008;scene.add(key);
+  const fill=new THREE.DirectionalLight(0xdbe9f6,.78);fill.position.set(.41,.16,.62);scene.add(fill);
+  const rim=new THREE.DirectionalLight(0xc6dbea,1.42);rim.position.set(.15,.39,-.68);scene.add(rim);
+  const floorGeometry=new THREE.PlaneGeometry(14,14),floorMaterial=new THREE.MeshStandardMaterial({color:0x151e28,metalness:.08,roughness:.95});
+  const floor=new THREE.Mesh(floorGeometry,floorMaterial);floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
   const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.12;controls.minDistance=.06;controls.maxDistance=2.6;controls.target.set(-.033,.035,0);
   const labels=document.createElement('div');labels.className='brake-scene-labels';host.appendChild(labels);
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.classList.add('brake-scene-leaders');svg.setAttribute('aria-hidden','true');host.appendChild(svg);
-  const note=document.createElement('div');note.className='brake-scene-note';note.textContent='피스톤·캘리퍼 이동 간격은 확대한 작동 표현';host.appendChild(note);
-  const stateBadge=document.createElement('div');stateBadge.className='brake-scene-state';host.appendChild(stateBadge);
+  const actuationNote='피스톤·캘리퍼 이동 간격은 확대한 작동 표현';
+  const note=document.createElement('div');note.className='brake-scene-note';note.textContent=actuationNote;host.appendChild(note);
+  const instruments=createRigInstruments(host);
   const rangeNote=document.createElement('div');rangeNote.className='brake-scene-range-note';rangeNote.setAttribute('role','status');rangeNote.hidden=true;host.appendChild(rangeNote);
   const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2(),labelNodes=new Map();
   let settings={},snapshot={},view=normalizeView(),assembly=createBrakeAssembly(settings,view),disposed=false,width=1,height=1,raf=0,dirty=true,buildCount=1,renderCount=0,dragStart=null,signature='',selectionHighlight=null,highlightedId=null,autoFraming=true,needsFit=true,framing=null;
   let inspection=null;
-  scene.add(assembly.group);
+  let fixtureRadius=assembly.settings.discOuterRadius,fixture=createDynoFixture(fixtureRadius);
+  floor.position.y=fixture.floorY;
+  scene.add(fixture.group,assembly.group);
   const geometrySignature=()=>JSON.stringify([normalizeGeometrySettings(settings),view.mode==='cutaway',view.mode==='cutaway'?Math.round(view.cutaway*100)/100:0]);
   signature=geometrySignature();
-  const cameras={isometric:[.36,.23,.73],front:[0,0,1],rear:[-.12,.14,-1],side:[1,.15,.015],top:[.01,1,.06]};
+  const cameras={isometric:[.45,.25,.73],front:[0,0,1],rear:[-.12,.14,-1],side:[1,.15,.015],top:[.01,1,.06]};
   function frameSubject(subject=assembly.group,direction=cameras[view.camera]){framing=fitBrakeCamera(camera,subject,{aspect:width/height,direction:new THREE.Vector3(...direction),fill:.72});controls.target.copy(framing.target);controls.update();dirty=true;}
   function setCamera(name='isometric'){view.camera=cameras[name]?name:'isometric';autoFraming=true;frameSubject();needsFit=false;}
+  function updateFixture() {
+    const radius=assembly.settings.discOuterRadius;
+    if(radius!==fixtureRadius){scene.remove(fixture.group);fixture.dispose();fixture=createDynoFixture(radius);scene.add(fixture.group);fixtureRadius=radius;floor.position.y=fixture.floorY;}
+    fixture.group.visible=!inspection&&view.mode!=='exploded';
+    floor.visible=!inspection;
+  }
   function applyInspection(){
     if(!inspection)return;
     const part=assembly.components.get(inspection.partId);if(!part?.structuralVisible){restoreInspection();return;}
     const visible=new Set([inspection.partId,...(inspection.partId==='valves'?['hydraulic-unit']:[])]);
     for(const item of assembly.components.values())item.node.visible=item.structuralVisible&&visible.has(item.id);
-    floor.visible=false;grid.visible=false;
+    updateFixture();
     note.textContent=inspection.partId==='bearing'?'접촉각 0° · 미끄럼 없는 대표 베어링 운동':inspection.partId==='valves'?'밸브 이동량은 확대한 작동 표현':inspection.partId==='pump'?'펌프는 계산된 가동 상태만 표시 · 회전수 미지정':'대표 부품 형상 · 제조용 CAD 아님';
   }
   function inspectPart(id){
     const part=assembly.components.get(id);if(disposed||!part?.structuralVisible)return false;
-    if(!inspection)inspection={partId:id,position:camera.position.clone(),quaternion:camera.quaternion.clone(),target:controls.target.clone(),camera:view.camera,autoFraming,framing,visibility:new Map([...assembly.components].map(([key,value])=>[key,value.node.visible])),floor:floor.visible,grid:grid.visible};
+    if(!inspection)inspection={partId:id,position:camera.position.clone(),quaternion:camera.quaternion.clone(),target:controls.target.clone(),camera:view.camera,autoFraming,framing};
     else inspection.partId=id;
     selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;view.selectedPart=id;
     applyInspection();autoFraming=true;frameSubject(assembly.group,id==='bearing'?[.65,.18,1]:id==='valves'?[.7,.15,1]:cameras[view.camera]);needsFit=false;updateSelection();dirty=true;return true;
@@ -576,7 +656,7 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
     // A geometry rebuild can add formerly absent parts, such as slide pins
     // when switching from fixed to floating. Restore the current structure.
     for(const part of assembly.components.values())part.node.visible=part.structuralVisible;
-    floor.visible=saved.floor;grid.visible=saved.grid;note.textContent='피스톤·캘리퍼 이동 간격은 확대한 작동 표현';const damping=controls.enableDamping;controls.enableDamping=false;controls.update();camera.position.copy(saved.position);camera.quaternion.copy(saved.quaternion);controls.target.copy(saved.target);view.camera=saved.camera;autoFraming=saved.autoFraming;framing=saved.framing;needsFit=false;controls.update();controls.enableDamping=damping;camera.updateMatrixWorld(true);
+    updateFixture();note.textContent=actuationNote;const damping=controls.enableDamping;controls.enableDamping=false;controls.update();camera.position.copy(saved.position);camera.quaternion.copy(saved.quaternion);controls.target.copy(saved.target);view.camera=saved.camera;autoFraming=saved.autoFraming;framing=saved.framing;needsFit=false;controls.update();controls.enableDamping=damping;camera.updateMatrixWorld(true);
     selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;updateSelection();dirty=true;return true;
   }
   function syncLabels(){
@@ -606,7 +686,9 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
       const x=(vector.x*.5+.5)*width,y=(-vector.y*.5+.5)*height;
       candidates.push({...entry,id,x,y,selected,priority:priority.indexOf(id)});
     }
-    const placements=layoutBrakeLabels(candidates,width,height),retained=new Set(placements.map(entry=>entry.id));
+    const top=instruments.element.offsetTop+instruments.element.offsetHeight+16;
+    const bottom=Math.min(note.offsetTop,rangeNote.hidden||rangeNote.offsetTop<top?height:rangeNote.offsetTop)-16;
+    const placements=layoutBrakeLabels(candidates,width,height,{top,bottom}),retained=new Set(placements.map(entry=>entry.id));
     for(const entry of candidates)if(!retained.has(entry.id)){entry.button.hidden=true;entry.line.style.display='none';}
     for(const entry of placements){
       entry.button.style.width=`${entry.width}px`;entry.button.style.left=`${entry.left}px`;entry.button.style.top=`${entry.top}px`;
@@ -617,8 +699,8 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   function applyQuality(){const high=view.quality==='high',low=view.quality==='low';renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,low?1:high?1.75:1.35));renderer.shadowMap.enabled=!low;key.shadow.mapSize.set(high?2048:1024,high?2048:1024);}
   function rebuildIfNeeded(){const next=geometrySignature();if(next===signature)return;selectionHighlight?.dispose();selectionHighlight=null;highlightedId=null;const old=assembly;assembly=createBrakeAssembly(settings,view);scene.remove(old.group);old.dispose();scene.add(assembly.group);signature=next;buildCount++;syncLabels();applyInspection();needsFit=true;}
   function updateRangeNote(){const representation=getGeometryRepresentation(settings);rangeNote.hidden=!representation.representative;rangeNote.textContent='일부 치수는 대표 형상 · 계산값 유지';rangeNote.title=representation.changes.map(change=>`${change.label}: 계산 ${change.requested} → 그림 ${change.rendered}${change.field.includes('Count')?'개/측':' m'}`).join('\n');host.dataset.representativeGeometry=String(representation.representative);}
-  function setState(nextSnapshot={},nextSettings=settings,nextView){if(disposed)return;const oldMode=view.mode;snapshot={...nextSnapshot};settings={...nextSettings};if(nextView)view=normalizeView({...view,...nextView});rebuildIfNeeded();assembly.update(snapshot,view);if((needsFit&&autoFraming)||oldMode!==view.mode)setCamera(view.camera);updateSelection();updateRangeNote();const phases={increase:'압력 증가',hold:'압력 유지',decrease:'감압',off:'ABS 꺼짐','low-speed':'정지 근처',stopped:'정지'};stateBadge.textContent=`${(Math.max(0,finite(snapshot.pressure,0))/1e5).toFixed(1)} bar · ${phases[snapshot.absPhase]??'대기'}`;dirty=true;}
-  function setView(partial={}){if(disposed)return;const oldQuality=view.quality,oldMode=view.mode;view=normalizeView({...view,...partial});rebuildIfNeeded();assembly.update(snapshot,view);updateSelection();if(partial.camera||oldMode!==view.mode||needsFit&&autoFraming)setCamera(view.camera);if(view.quality!==oldQuality){applyQuality();resize();}dirty=true;}
+  function setState(nextSnapshot={},nextSettings=settings,nextView){if(disposed)return;const oldMode=view.mode;snapshot={...nextSnapshot};settings={...nextSettings};if(nextView)view=normalizeView({...view,...nextView});rebuildIfNeeded();assembly.update(snapshot,view);updateFixture();if((needsFit&&autoFraming)||oldMode!==view.mode)setCamera(view.camera);updateSelection();updateRangeNote();instruments.update(snapshot);dirty=true;}
+  function setView(partial={}){if(disposed)return;const oldQuality=view.quality,oldMode=view.mode;view=normalizeView({...view,...partial});rebuildIfNeeded();assembly.update(snapshot,view);updateFixture();updateSelection();if(partial.camera||oldMode!==view.mode||needsFit&&autoFraming)setCamera(view.camera);if(view.quality!==oldQuality){applyQuality();resize();}dirty=true;}
   function resize(){if(disposed)return;width=Math.max(1,host.clientWidth);height=Math.max(1,host.clientHeight);camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height,false);if(autoFraming)frameSubject();dirty=true;}
   function focus(id){const part=assembly.components.get(id);if(!part?.structuralVisible)return false;view.selectedPart=id;updateSelection();dirty=true;return true;}
   function render(){if(disposed)return;const changed=controls.update();if(dirty||changed){renderer.render(scene,camera);updateLabels();renderCount++;dirty=false;}raf=requestAnimationFrame(render);}
@@ -627,6 +709,6 @@ export function createBrakeScene(host, { onSelect = () => {} } = {}) {
   renderer.domElement.addEventListener('pointerdown',pointerDown);renderer.domElement.addEventListener('pointerup',pointerUp);
   const observer=typeof ResizeObserver==='function'?new ResizeObserver(resize):null;observer?.observe(host);
   controls.addEventListener('change',()=>{dirty=true;});controls.addEventListener('start',()=>{autoFraming=false;});syncLabels();applyQuality();resize();setCamera(view.camera);setState();render();
-  const dispose=()=>{if(disposed)return;disposed=true;cancelAnimationFrame(raf);observer?.disconnect();renderer.domElement.removeEventListener('pointerdown',pointerDown);renderer.domElement.removeEventListener('pointerup',pointerUp);controls.dispose();selectionHighlight?.dispose();assembly.dispose();floorGeometry.dispose();floorMaterial.dispose();grid.geometry.dispose();grid.material.dispose();environment.dispose();key.shadow.map?.dispose();renderer.dispose();renderer.forceContextLoss();for(const element of [renderer.domElement,labels,svg,note,stateBadge,rangeNote])element.remove();};
+  const dispose=()=>{if(disposed)return;disposed=true;cancelAnimationFrame(raf);observer?.disconnect();renderer.domElement.removeEventListener('pointerdown',pointerDown);renderer.domElement.removeEventListener('pointerup',pointerUp);controls.dispose();selectionHighlight?.dispose();assembly.dispose();fixture.dispose();floorGeometry.dispose();floorMaterial.dispose();environment.dispose();key.shadow.map?.dispose();renderer.dispose();renderer.forceContextLoss();for(const element of [renderer.domElement,labels,svg,note,instruments.element,rangeNote])element.remove();};
   return {setState,setView,resize,dispose,focus,setCamera,inspectPart,restoreInspection,getComponents:()=>assembly.getComponents(),getDiagnostics:()=>({...assembly.getDiagnostics(),disposed,buildCount,renderCount,canvas:{width,height,pixelRatio:renderer.getPixelRatio()},camera:view.camera,cameraPose:{position:camera.position.toArray(),target:controls.target.toArray()},autoFraming,selectedPart:view.selectedPart,inspection:{active:!!inspection,partId:inspection?.partId??null},selection:{style:selectionHighlight?.style??'none',box:false},framing:framing?{distance:framing.distance,subjectFill:framing.subjectFill}:null,labels:{enabled:!!view.labels,visible:Number(labels.dataset.visibleCount??0)},renderer:{calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures},webgl2:true})};
 }

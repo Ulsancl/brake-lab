@@ -17,6 +17,20 @@ const $=selector=>document.querySelector(selector),all=selector=>[...document.qu
 const storageKey='brake-lab-project-v1',format=projectFormat;
 const desktop=window.brakeDesktop?.isDesktop?window.brakeDesktop:null;
 const number=(v,d=1)=>Number.isFinite(v)?v.toLocaleString('ko-KR',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
+const thermalNumber = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 3 });
+function formatCondition(key, value) {
+ switch (key) {
+  case 'speedKmh': return number(value, 0) + ' km/h';
+  case 'pressureBar': return number(value, 0) + ' bar';
+  case 'padFriction': return number(value, 2);
+  case 'padMeanRadius': return number(value * 1000, 0) + ' mm';
+  case 'mass': return number(value, 0) + ' kg';
+  case 'initialTemperatureC':
+  case 'ambientTemperatureC': return thermalNumber.format(value) + ' °C';
+  case 'coolingWattsPerK': return thermalNumber.format(value) + ' W/K';
+  default: return String(value);
+ }
+}
 const toast=(message,context='notice')=>{const node=$('#toast');node.textContent=message;node.dataset.context=context;node.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.hidden=true,5000);};
 function dismissComparisonNotice(){if($('#toast').dataset.context==='comparison'){$('#toast').hidden=true;clearTimeout(toast.timer);}}
 let settings=normalizeSettings(defaultSettings),comparison=null,view={mode:'cutaway',cutaway:.65,explode:.5,labels:true,selectedPart:'rotor',quality:'auto',camera:'isometric'};
@@ -84,7 +98,12 @@ function persist(){
 function flushBrowserOnHide(){browserAutosave?.onHide();}
 function syncInputs(){
  for(const el of all('[data-setting]')){const value=settings[el.dataset.setting];if(el.type==='checkbox')el.checked=value;else{if(el.type==='range'){el.dataset.baseMin??=el.min;el.dataset.baseMax??=el.max;el.dataset.baseStep??=el.step;el.min=Math.min(Number(el.dataset.baseMin),value);el.max=Math.max(Number(el.dataset.baseMax),value);const position=(value-Number(el.dataset.baseMin))/Number(el.dataset.baseStep);el.step=Math.abs(position-Math.round(position))<1e-7?el.dataset.baseStep:'any';}el.value=value;}}
- for(const el of all('[data-output]')){const key=el.dataset.output,value=settings[key];el.textContent=key==='speedKmh'?number(value,0)+' km/h':key==='pressureBar'?number(value,0)+' bar':key==='padFriction'?number(value,2):key==='padMeanRadius'?number(value*1000,0)+' mm':number(value,0)+' kg';}
+ for (const output of all('[data-output]')) {
+  const key = output.dataset.output;
+  const text = formatCondition(key, settings[key]);
+  output.textContent = text;
+  if (output.htmlFor.length) document.getElementById(output.htmlFor[0])?.setAttribute('aria-valuetext', text);
+ }
  all('[data-caliper]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.caliper===settings.caliper)));
  all('[data-mode]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.mode===view.mode)));
  $('#explode').value=view.explode;$('#explode').disabled=view.mode!=='exploded';$('#labels').checked=view.labels;
@@ -141,7 +160,25 @@ function showComparison(){
  const explanation=describeComparison(comparison);$('#comparison-headline').textContent=explanation.headline;$('#comparison-detail').textContent=explanation.detail;$('#comparison-summary').dataset.direction=explanation.direction;
  $('#comparison-energy').textContent=describeComparisonEnergy(comparison);
  $('#result-rows').replaceChildren(...[['ABS 끔',comparison.withoutAbs],['ABS 켬',comparison.withAbs]].map(([label,run])=>{const row=document.createElement('tr');const s=run.summary;for(const value of [label,s.stopped?number(s.stopDistance,2)+' m':'미완료',s.stopped?number(s.stopTime,2)+' s':'미완료',number(s.lockTime,2)+' s',number(s.peakTemperatureC)+' °C']){const cell=document.createElement('td');cell.textContent=value;row.append(cell);}return row;}));
- const resultSettings=comparison.settings,completed=comparison.withoutAbs.summary.stopped&&comparison.withAbs.summary.stopped,differs=Object.keys(defaultSettings).some(key=>key!=='abs'&&JSON.stringify(settings[key])!==JSON.stringify(resultSettings[key]));$('#comparison-note').textContent='보관 당시 조건'+(differs?' (현재 조건과 다름)':'')+' · '+number(resultSettings.speedKmh,0)+' km/h · '+number(resultSettings.pressureBar,0)+' bar · '+({high:'높은',medium:'중간',low:'낮은'}[resultSettings.road]||'')+' 합성 접지 · '+(resultSettings.caliper==='fixed'?'고정 대향':'플로팅')+' · 패드 μ '+number(resultSettings.padFriction,3)+' · 반경 '+number(resultSettings.padMeanRadius*1000,1)+' mm · 배분 질량 '+number(resultSettings.mass,0)+' kg · '+(completed?'거리 차이 '+number(comparison.difference.stopDistance,2)+' m (켬 − 끔)':'기록된 시간 안에 정지하지 못했습니다. 거리·시간 비교는 미완료입니다.');drawTrace();
+ const resultSettings = comparison.settings;
+ const completed = comparison.withoutAbs.summary.stopped && comparison.withAbs.summary.stopped;
+ const differs = Object.keys(defaultSettings).some(key => key !== 'abs' && JSON.stringify(settings[key]) !== JSON.stringify(resultSettings[key]));
+ const condition = key => formatCondition(key, resultSettings[key]);
+ $('#comparison-note').textContent = [
+  '보관 당시 조건' + (differs ? ' (현재 조건과 다름)' : ''),
+  condition('speedKmh'), condition('pressureBar'),
+  ({ high: '높은', medium: '중간', low: '낮은' }[resultSettings.road]) + ' 합성 접지',
+  resultSettings.caliper === 'fixed' ? '고정 대향' : '플로팅',
+  '패드 μ ' + number(resultSettings.padFriction, 3),
+  '반경 ' + number(resultSettings.padMeanRadius * 1000, 1) + ' mm',
+  '배분 질량 ' + condition('mass'),
+  '디스크 시작 ' + condition('initialTemperatureC'),
+  '주변 공기 ' + condition('ambientTemperatureC'),
+  '냉각 계수 ' + condition('coolingWattsPerK'),
+  completed ? '거리 차이 ' + number(comparison.difference.stopDistance, 2) + ' m (켬 − 끔)'
+    : '기록된 시간 안에 정지하지 못했습니다. 거리·시간 비교는 미완료입니다.',
+ ].join(' · ');
+ drawTrace();
 }
 function runComparison(){window.brakeDesktop?.setBusy(true);try{comparison=compareAbs(settings);showComparison();persist();$('#results').scrollIntoView({block:'start',behavior:'auto'});$('#comparison-summary').focus({preventScroll:true});toast('비교 결과를 보관했습니다. 조건을 바꾸어 다시 비교해 보세요.','comparison');return structuredClone(comparison);}catch(error){toast(error.message);throw error;}finally{window.brakeDesktop?.setBusy(false);}}
 function loadProject(text){const parsed=parseProject(text,view);settings=parsed.settings;comparison=parsed.comparison;view={...view,...parsed.view};reset();syncInputs();updateParts();showComparison();persist();return true;}
